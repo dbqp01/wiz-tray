@@ -1,0 +1,6 @@
+services:
+  build:
+    build: .
+    image: wiz-tray:local
+    volumes:
+      - ./dist:/output

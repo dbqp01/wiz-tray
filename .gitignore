@@ -1,0 +1,6 @@
+/target/
+/dist/
+/wiz-tray.json
+/wiz-home.json
+*.exe
+*.lnk
