@@ -4,3 +4,17 @@
 /wiz-home.json
 *.exe
 *.lnk
+
+# Local credentials and device exports
+.env
+.env.*
+!.env.example
+**/wiz-tray.json
+**/wiz-home.json
+**/credentials.json
+**/token.json
+**/client_secret*.json
+*.pem
+*.p12
+*.pfx
+*.key

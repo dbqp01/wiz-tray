@@ -14,8 +14,9 @@ use winit::{
 };
 
 use wiz_tray::{
-    Action, LightConfig, PREFERRED_SCENE, Pilot, find_signing_key, normalize_mac, parse_key,
-    parse_white_range, perform, temperature_options,
+    Action, CloudConfig, LightConfig, PREFERRED_SCENE, Pilot, find_signing_key, normalize_mac,
+    parse_cloud_id, parse_cloud_oauth, parse_key, parse_white_range, perform, perform_cloud,
+    temperature_options, validate_cloud_config,
 };
 
 const SCENES: &[(u16, &str)] = &[
@@ -33,7 +34,7 @@ enum UiEvent {
 }
 
 struct App {
-    config: LightConfig,
+    config: ConnectionConfig,
     proxy: EventLoopProxy<UiEvent>,
     tray: Option<TrayIcon>,
     status: Option<MenuItem>,
@@ -41,8 +42,30 @@ struct App {
     command_running: bool,
 }
 
+#[derive(Clone)]
+enum ConnectionConfig {
+    Local(LightConfig),
+    Cloud(CloudConfig),
+}
+
+impl ConnectionConfig {
+    fn white_range(&self) -> Option<(u16, u16)> {
+        match self {
+            Self::Local(config) => config.white_range,
+            Self::Cloud(config) => config.white_range,
+        }
+    }
+
+    fn perform(&self, action: &Action) -> Result<Pilot, String> {
+        match self {
+            Self::Local(config) => perform(config, action),
+            Self::Cloud(config) => perform_cloud(config, action),
+        }
+    }
+}
+
 impl App {
-    fn new(config: LightConfig, proxy: EventLoopProxy<UiEvent>) -> Self {
+    fn new(config: ConnectionConfig, proxy: EventLoopProxy<UiEvent>) -> Self {
         Self {
             config,
             proxy,
@@ -59,6 +82,16 @@ impl App {
         menu.append(&status).map_err(|error| error.to_string())?;
         menu.append(&PredefinedMenuItem::separator())
             .map_err(|error| error.to_string())?;
+        if matches!(&self.config, ConnectionConfig::Cloud(_)) {
+            append_action(
+                &menu,
+                "Conectar WiZ Cloud con Google",
+                Action::Connect,
+                &mut self.actions,
+            )?;
+            menu.append(&PredefinedMenuItem::separator())
+                .map_err(|error| error.to_string())?;
+        }
 
         append_action(
             &menu,
@@ -80,7 +113,7 @@ impl App {
             )?;
         }
 
-        if let Some(range) = self.config.white_range {
+        if let Some(range) = self.config.white_range() {
             menu.append(&PredefinedMenuItem::separator())
                 .map_err(|error| error.to_string())?;
             for temperature in temperature_options(range) {
@@ -136,7 +169,7 @@ impl App {
         let config = self.config.clone();
         let proxy = self.proxy.clone();
         thread::spawn(move || {
-            let result = perform(&config, &action);
+            let result = config.perform(&action);
             let _ = proxy.send_event(UiEvent::Finished(result));
         });
     }
@@ -262,7 +295,44 @@ fn scene_name(scene_id: Option<u16>) -> &'static str {
         .unwrap_or("modo actual")
 }
 
-fn load_config() -> Result<LightConfig, String> {
+fn load_config() -> Result<ConnectionConfig, String> {
+    let settings_path = settings_path()
+        .ok_or_else(|| "No pude localizar la configuración junto a la aplicación.".to_string())?;
+    let bytes =
+        fs::read(settings_path).map_err(|error| format!("No pude leer wiz-tray.json: {error}"))?;
+    let settings: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("wiz-tray.json no es JSON válido: {error}"))?;
+    let backend = match settings.get("backend") {
+        None => "local",
+        Some(Value::String(backend)) => backend,
+        Some(_) => return Err("wiz-tray.json: backend debe ser local o cloud.".to_string()),
+    };
+    if backend == "cloud" {
+        let device_id = parse_cloud_id(settings.get("device_id"), "device_id")?;
+        let home_id = parse_cloud_id(settings.get("home_id"), "home_id")?;
+        let mac_address = settings
+            .get("mac_address")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "wiz-tray.json no contiene mac_address para WiZ Cloud.".to_string())?;
+        let white_range = settings
+            .get("white_range")
+            .map(|range| parse_white_range(&serde_json::json!({"white_range": range})))
+            .transpose()?;
+        let oauth = parse_cloud_oauth(&settings)?;
+        let config = CloudConfig {
+            device_id,
+            home_id,
+            mac_address: mac_address.to_string(),
+            white_range,
+            oauth,
+        };
+        validate_cloud_config(&config)?;
+        return Ok(ConnectionConfig::Cloud(config));
+    }
+    if backend != "local" {
+        return Err("wiz-tray.json: backend debe ser local o cloud.".to_string());
+    }
+
     let export_path = locate_export()?;
     let bytes =
         fs::read(&export_path).map_err(|error| format!("No pude leer el export WiZ: {error}"))?;
@@ -283,12 +353,6 @@ fn load_config() -> Result<LightConfig, String> {
         .ok_or_else(|| "El export WiZ no contiene la clave de control local.".to_string())?;
     let key = parse_key(key_text)?;
 
-    let settings_path = settings_path()
-        .ok_or_else(|| "No pude localizar la configuración junto a la aplicación.".to_string())?;
-    let bytes =
-        fs::read(settings_path).map_err(|error| format!("No pude leer wiz-tray.json: {error}"))?;
-    let settings: Value = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("wiz-tray.json no es JSON válido: {error}"))?;
     let ip = settings
         .get("device_ip")
         .and_then(Value::as_str)
@@ -302,12 +366,12 @@ fn load_config() -> Result<LightConfig, String> {
         .map(parse_white_range)
         .transpose()?;
 
-    Ok(LightConfig {
+    Ok(ConnectionConfig::Local(LightConfig {
         ip,
         mac,
         key,
         white_range,
-    })
+    }))
 }
 
 fn locate_export() -> Result<PathBuf, String> {

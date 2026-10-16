@@ -1,3 +1,8 @@
 {
-  "device_ip": "192.168.1.100"
+  "backend": "local",
+  "device_ip": "192.168.1.100",
+  "device_id": 12345678,
+  "home_id": 1234567890,
+  "mac_address": "",
+  "white_range": [2200, 6500]
 }
