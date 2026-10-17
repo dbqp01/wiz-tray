@@ -27,6 +27,15 @@ pub struct LightConfig {
     pub white_range: Option<(u16, u16)>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExportDevice {
+    pub name: String,
+    pub mac: String,
+    pub white_range: Option<(u16, u16)>,
+    pub device_id: Option<u64>,
+    pub home_id: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct CloudConfig {
     pub device_id: u64,
@@ -102,6 +111,52 @@ pub fn find_signing_key(value: &Value) -> Option<&str> {
     }
 }
 
+pub fn parse_export_devices(value: &Value) -> Result<Vec<ExportDevice>, String> {
+    let devices = value
+        .get("devices")
+        .and_then(Value::as_array)
+        .filter(|devices| !devices.is_empty())
+        .ok_or_else(|| "El export WiZ no contiene focos.".to_string())?;
+
+    devices
+        .iter()
+        .map(|device| {
+            let mac = device
+                .get("mac_address")
+                .and_then(Value::as_str)
+                .filter(|mac| {
+                    mac.chars().all(|character| {
+                        character.is_ascii_hexdigit() || matches!(character, ':' | '-')
+                    })
+                })
+                .map(normalize_mac)
+                .filter(|mac| mac.len() == 12)
+                .ok_or_else(|| "El export WiZ contiene un foco sin MAC válida.".to_string())?;
+            let name = ["name", "device_name", "alias"]
+                .iter()
+                .find_map(|field| device.get(field).and_then(Value::as_str))
+                .filter(|name| !name.trim().is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("WiZ · {}", &mac[8..]));
+            let white_range = device
+                .get("traits")
+                .filter(|traits| {
+                    traits.get("is_tunable_white").and_then(Value::as_bool) == Some(true)
+                })
+                .map(parse_white_range)
+                .transpose()?;
+
+            Ok(ExportDevice {
+                name,
+                mac,
+                white_range,
+                device_id: parse_cloud_id(device.get("device_id"), "device_id").ok(),
+                home_id: parse_cloud_id(value.get("home_id"), "home_id").ok(),
+            })
+        })
+        .collect()
+}
+
 pub fn parse_key(value: &str) -> Result<Vec<u8>, String> {
     if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("La clave local WiZ no tiene el formato esperado.".to_string());
@@ -122,7 +177,7 @@ pub fn parse_cloud_id(value: Option<&Value>, field: &str) -> Result<u64, String>
                 .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
         })
         .filter(|id| *id > 0)
-        .ok_or_else(|| format!("wiz-tray.json no contiene {field} válido para WiZ Cloud."))
+        .ok_or_else(|| format!("WiZ Cloud requiere un {field} válido."))
 }
 
 pub fn parse_cloud_oauth(settings: &Value) -> Result<Option<CloudOAuthConfig>, String> {
@@ -261,17 +316,13 @@ fn perform_cloud_with_token(
     let (expected_state, expected_scene, expected_temp) =
         cloud_expected_state(action).ok_or_else(|| "acción WiZ no reconocida".to_string())?;
     let mut last_error = "El foco no confirmó el cambio en WiZ Cloud.".to_string();
-    // Cloud can briefly return stale state and omit scene_id after a scene change.
-    for attempt in 0..5 {
+    // Cloud can briefly return stale state after a scene change, so require an exact read-back.
+    for _ in 0..5 {
         thread::sleep(Duration::from_millis(400));
         match get_pilot() {
             Ok(pilot)
                 if pilot.state == expected_state
-                    && expected_scene.is_none_or(|scene| {
-                        pilot
-                            .scene_id
-                            .map_or(attempt == 4, |actual| actual == scene)
-                    })
+                    && expected_scene.is_none_or(|scene| pilot.scene_id == Some(scene))
                     && expected_temp.is_none_or(|temperature| pilot.temp == Some(temperature)) =>
             {
                 return Ok(pilot);
@@ -285,10 +336,10 @@ fn perform_cloud_with_token(
 
 pub fn validate_cloud_config(config: &CloudConfig) -> Result<(), String> {
     if config.device_id == 0 {
-        return Err("wiz-tray.json no contiene un device_id WiZ válido.".to_string());
+        return Err("WiZ Cloud requiere un ID de foco válido.".to_string());
     }
     if config.home_id == 0 {
-        return Err("wiz-tray.json no contiene un home_id WiZ válido.".to_string());
+        return Err("WiZ Cloud requiere un ID de hogar válido.".to_string());
     }
     if config.mac_address.is_empty()
         || !config
@@ -297,7 +348,7 @@ pub fn validate_cloud_config(config: &CloudConfig) -> Result<(), String> {
             .all(|character| character.is_ascii_hexdigit() || matches!(character, ':' | '-'))
         || normalize_mac(&config.mac_address).len() != 12
     {
-        return Err("wiz-tray.json no contiene una mac_address WiZ válida.".to_string());
+        return Err("WiZ Cloud requiere una MAC de foco válida.".to_string());
     }
     if let Some(range) = config.white_range {
         if !(1000 <= range.0 && range.0 < range.1 && range.1 <= 12000) {
@@ -305,6 +356,26 @@ pub fn validate_cloud_config(config: &CloudConfig) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+pub fn save_cloud_credentials(oauth: &CloudOAuthConfig) -> Result<(), String> {
+    cloud_auth::save_oauth_config(oauth)
+}
+
+#[cfg(windows)]
+pub fn load_cloud_credentials() -> Result<Option<CloudOAuthConfig>, String> {
+    cloud_auth::load_oauth_config()
+}
+
+#[cfg(windows)]
+pub fn has_cloud_session() -> bool {
+    cloud_auth::has_saved_session()
+}
+
+#[cfg(windows)]
+pub fn clear_cloud_session() -> Result<(), String> {
+    cloud_auth::clear_session()
 }
 
 fn cloud_get_pilot(
@@ -632,6 +703,29 @@ mod tests {
     }
 
     #[test]
+    fn export_devices_are_validated_and_keep_each_light_identity() {
+        let home = json!({
+            "home_id": 456,
+            "devices": [
+                {"device_id": 123, "name": "Desk", "mac_address": "AA:BB:CC:DD:EE:01", "traits": {"is_tunable_white": true, "white_range": [2200, 6500]}},
+                {"mac_address": "AA-BB-CC-DD-EE-02", "traits": {"is_tunable_white": false}}
+            ]
+        });
+        let devices = parse_export_devices(&home).unwrap();
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].name, "Desk");
+        assert_eq!(devices[0].mac, "aabbccddee01");
+        assert_eq!(devices[0].white_range, Some((2200, 6500)));
+        assert_eq!(devices[0].device_id, Some(123));
+        assert_eq!(devices[0].home_id, Some(456));
+        assert_eq!(devices[1].name, "WiZ · ee02");
+        assert_eq!(devices[1].white_range, None);
+        assert_eq!(devices[1].device_id, None);
+        assert_eq!(devices[1].home_id, Some(456));
+        assert!(parse_export_devices(&json!({"devices": [{"mac_address": "invalid"}]})).is_err());
+    }
+
+    #[test]
     fn signed_parameters_preserve_wifi_protocol_order() {
         let fields = [("state", json!(true)), ("sceneId", json!(12))];
         assert_eq!(
@@ -773,6 +867,7 @@ mod tests {
                         "id": 123,
                         "current_state": {
                             "status": state,
+                            "scene_id": if reads < 5 { 0 } else { u64::from(PREFERRED_SCENE) },
                             "temperature": if reads < 5 { 6500 } else { 4200 }
                         }
                     }]}})
@@ -792,8 +887,41 @@ mod tests {
             perform_cloud_with_token(&config, &Action::Daylight, "mock-token", &base_url).unwrap();
         server.join().unwrap();
         assert!(pilot.state);
-        assert_eq!(pilot.scene_id, None);
+        assert_eq!(pilot.scene_id, Some(PREFERRED_SCENE));
         assert_eq!(pilot.temp, Some(4200));
+    }
+
+    #[test]
+    fn cloud_scene_write_fails_if_scene_id_never_matches() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            for _ in 0..6 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let (request, _, _) = read_test_request(&stream);
+                let response = if request.starts_with("POST ") {
+                    json!({"success": true})
+                } else {
+                    json!({"data": {"lights": [{
+                        "id": 123,
+                        "current_state": {"status": true, "temperature": 6500}
+                    }]}})
+                };
+                write_test_response(&mut stream, "200 OK", &response);
+            }
+        });
+
+        let config = CloudConfig {
+            device_id: 123,
+            home_id: 456,
+            mac_address: "AA:BB:CC:DD:EE:FF".to_string(),
+            white_range: Some((2200, 6500)),
+            oauth: None,
+        };
+        assert!(
+            perform_cloud_with_token(&config, &Action::Daylight, "mock-token", &base_url).is_err()
+        );
+        server.join().unwrap();
     }
 
     #[test]

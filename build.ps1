@@ -26,10 +26,6 @@ try {
     $exe = Join-Path $projectRoot "target\$target\release\wiz-tray.exe"
     $output = Join-Path $distDir 'WiZ Tray.exe'
     Copy-Item -LiteralPath $exe -Destination $output -Force
-    $config = Join-Path $distDir 'wiz-tray.json'
-    if (-not (Test-Path -LiteralPath $config)) {
-        Copy-Item -LiteralPath (Join-Path $projectRoot 'wiz-tray.example.json') -Destination $config
-    }
     Write-Output "Ejecutable listo: $output"
 }
 finally {

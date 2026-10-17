@@ -4,13 +4,13 @@ Lee primero `README.md` y `git status --short`. Conserva los cambios existentes 
 
 ## Si ayudas a alguien a instalarla
 
-1. Confirma que la persona usa Windows 10/11 de 64 bits. Docker sirve para compilar, no para mostrar ni ejecutar la bandeja.
-2. Explica que `docker compose run --build --rm build` produce `dist/WiZ Tray.exe` y prueba contra un foco simulado. No presentes esa prueba como validación de una bombilla real.
-3. Pregunta qué necesita: control local en la misma red o control remoto por WiZ Cloud.
-4. Para el modo local, guía la exportación local desde la app WiZ, la copia a `dist/wiz-home.json` y la configuración de `device_ip`. No pidas que pegue o suba el export: contiene una clave privada.
-5. Para Cloud, lee el aviso de `README.md` antes de dar pasos. El flujo doméstico usa endpoints privados; el repo no incluye credenciales OAuth de la app WiZ ni documenta una fuente oficial para conseguirlas. El cliente OAuth de Google no reemplaza esas credenciales. Si faltan, explica el bloqueo con claridad; no inventes valores ni prometas que un clon limpio funciona en Cloud.
-6. Nunca pidas contraseñas, códigos OAuth, access tokens o refresh tokens en el chat. Indica que el login debe abrirse en el navegador del usuario y que la configuración sensible se guarda solo localmente.
-7. Si la persona quiere la API oficialmente documentada, remite a la documentación de WiZ Pro enlazada en el README y explica que es una ruta distinta.
+1. Confirma que la persona usa Windows 10/11 de 64 bits. Docker compila la app, pero no ejecuta ni muestra la bandeja.
+2. `docker compose run --build --rm build` produce `dist/WiZ Tray.exe` y ejecuta pruebas contra un foco simulado. No lo presentes como validación de una bombilla real.
+3. La app ofrece configuración guiada en **Conexiones** para Local y WiZ Cloud. Puede guardar ambos modos.
+4. Para Local, guía la exportación desde la app WiZ y la selección de `wiz-home.json` en la app. No pidas que pegue o suba el export: contiene una clave privada.
+5. Cloud usa endpoints domésticos privados. El repo no incluye credenciales OAuth privadas de la app WiZ ni documenta una fuente oficial para obtenerlas. Google OAuth no reemplaza esas credenciales. Un clon limpio no completa Cloud hasta que la persona proporcione credenciales obtenidas por una vía autorizada.
+6. Nunca pidas contraseñas, códigos OAuth, access tokens, refresh tokens ni exports privados por chat. El login se abre en el navegador y credenciales OAuth y tokens se cifran localmente con Windows DPAPI.
+7. Para una API documentada, remite a la documentación de WiZ Pro del README y aclara que es una ruta distinta.
 
 ## Interfaz de configuración
 
@@ -21,7 +21,7 @@ Lee primero `README.md` y `git status --short`. Conserva los cambios existentes 
 ## Cambios y verificación
 
 - Antes de editar, revisa `Cargo.toml`, `Cargo.lock`, `build.ps1`, `compose.yaml` y los llamadores afectados. Mantén el cambio pequeño y no reviertas ediciones previas.
-- `src/windows_app.rs` carga `wiz-tray.json` desde la carpeta del ejecutable y construye la bandeja. `src/lib.rs` implementa validación y comandos locales/cloud. `src/cloud_auth.rs` maneja Google OAuth, el intercambio WiZ y el token protegido con DPAPI.
+- `src/windows_app.rs` implementa el dashboard, los formularios de configuración y la bandeja. Guarda preferencias sin secretos en `%LOCALAPPDATA%\WiZ Tray\settings.json`. `src/lib.rs` implementa validación y comandos locales/cloud. `src/cloud_auth.rs` maneja Google OAuth, el intercambio WiZ y el almacenamiento DPAPI.
 - Mantén fuera de Git `wiz-tray.json`, `wiz-home.json`, tokens, credenciales OAuth, claves y ejecutables. Revisa `.gitignore` antes de preparar un commit; nunca incluyas valores de secretos en mensajes, logs o pruebas.
 - El flujo reproducible de Docker es `docker compose run --build --rm build`: comprueba el código con pruebas simuladas y compila el `.exe`. En Windows, `build.ps1` comprueba formato, ejecuta pruebas y compila el release. Distingue siempre estas comprobaciones de una prueba real con WiZ Cloud o una bombilla física.
 - Al reportar el resultado, indica qué se probó realmente y qué depende de la red, credenciales OAuth o hardware del usuario.

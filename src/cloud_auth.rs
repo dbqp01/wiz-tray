@@ -3,6 +3,7 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
+    os::windows::ffi::OsStrExt,
     path::PathBuf,
     ptr::{null, null_mut},
     thread,
@@ -21,6 +22,7 @@ use windows_sys::Win32::{
         BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom, CRYPT_INTEGER_BLOB,
         CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
     },
+    Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW},
     UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
 };
 
@@ -32,6 +34,8 @@ const WIZ_SCOPE: &str = "wiz_android_v2";
 const WIZ_GOOGLE_GRANT: &str = "urn:google_v2";
 const TOKEN_PREFIX: &[u8] = b"WiZ Tray token v1\n";
 const TOKEN_FILE: &str = "cloud-token";
+const OAUTH_PREFIX: &[u8] = b"WiZ Tray OAuth v1\n";
+const OAUTH_FILE: &str = "cloud-oauth";
 const TOKEN_LIMIT: usize = 16 * 1024;
 const CALLBACK_WAIT: Duration = Duration::from_secs(300);
 
@@ -86,13 +90,13 @@ pub(super) fn access_token(config: &CloudConfig) -> Result<String, String> {
 
 fn oauth_config(config: &CloudConfig) -> Result<&CloudOAuthConfig, String> {
     let oauth = config.oauth.as_ref().ok_or_else(|| {
-        "Falta la configuración OAuth en wiz-tray.json; agrega los tres campos google_oauth_client_id, wiz_oauth_client_id y wiz_oauth_client_secret.".to_string()
+        "Faltan las credenciales OAuth de Google y WiZ. Configúralas en Conexiones.".to_string()
     })?;
     if oauth.google_client_id.trim().is_empty()
         || oauth.wiz_client_id.trim().is_empty()
         || oauth.wiz_client_secret.trim().is_empty()
     {
-        return Err("La configuración OAuth de wiz-tray.json está incompleta.".to_string());
+        return Err("Las credenciales OAuth de WiZ Tray están incompletas.".to_string());
     }
     Ok(oauth)
 }
@@ -424,10 +428,128 @@ fn write_callback_response(
 }
 
 fn token_path() -> Result<PathBuf, String> {
+    data_path(TOKEN_FILE)
+}
+
+fn oauth_path() -> Result<PathBuf, String> {
+    data_path(OAUTH_FILE)
+}
+
+fn data_path(file: &str) -> Result<PathBuf, String> {
     env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .map(|path| path.join("WiZ Tray").join(TOKEN_FILE))
-        .ok_or_else(|| "Windows no expuso la carpeta local para guardar la sesión WiZ.".to_string())
+        .map(|path| path.join("WiZ Tray").join(file))
+        .ok_or_else(|| "Windows no expuso el almacenamiento local de WiZ Tray.".to_string())
+}
+
+pub(super) fn save_oauth_config(oauth: &CloudOAuthConfig) -> Result<(), String> {
+    if oauth.google_client_id.is_empty()
+        || oauth.google_client_id.len() > TOKEN_LIMIT
+        || oauth.google_client_id.chars().any(char::is_control)
+        || oauth.google_client_secret.as_ref().is_some_and(|secret| {
+            secret.is_empty() || secret.len() > TOKEN_LIMIT || secret.chars().any(char::is_control)
+        })
+        || oauth.wiz_client_id.is_empty()
+        || oauth.wiz_client_id.len() > TOKEN_LIMIT
+        || oauth.wiz_client_id.chars().any(char::is_control)
+        || oauth.wiz_client_secret.is_empty()
+        || oauth.wiz_client_secret.len() > TOKEN_LIMIT
+        || oauth.wiz_client_secret.chars().any(char::is_control)
+    {
+        return Err("Las credenciales OAuth no tienen un formato válido.".to_string());
+    }
+    let value = serde_json::json!({
+        "google_client_id": oauth.google_client_id,
+        "google_client_secret": oauth.google_client_secret,
+        "wiz_client_id": oauth.wiz_client_id,
+        "wiz_client_secret": oauth.wiz_client_secret,
+    });
+    let mut plaintext = OAUTH_PREFIX.to_vec();
+    plaintext.extend(
+        serde_json::to_vec(&value)
+            .map_err(|_| "No pude preparar las credenciales WiZ de forma segura.".to_string())?,
+    );
+    let encrypted = dpapi_protect(&plaintext)?;
+    let path = oauth_path()?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "No pude preparar el almacenamiento local de WiZ.".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|_| "No pude preparar el almacenamiento local de WiZ.".to_string())?;
+    write_protected_file(&path, &encrypted)
+}
+
+pub(super) fn load_oauth_config() -> Result<Option<CloudOAuthConfig>, String> {
+    let encrypted = match fs::read(oauth_path()?) {
+        Ok(encrypted) => encrypted,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("No pude leer las credenciales WiZ guardadas.".to_string()),
+    };
+    if encrypted.is_empty() || encrypted.len() > TOKEN_LIMIT {
+        return Err("Las credenciales WiZ guardadas no son válidas.".to_string());
+    }
+    let plaintext = dpapi_unprotect(&encrypted)?;
+    let value: Value = serde_json::from_slice(
+        plaintext
+            .strip_prefix(OAUTH_PREFIX)
+            .ok_or_else(|| "Las credenciales WiZ guardadas no son válidas.".to_string())?,
+    )
+    .map_err(|_| "Las credenciales WiZ guardadas no son válidas.".to_string())?;
+    let oauth = CloudOAuthConfig {
+        google_client_id: required_string(&value, "google_client_id", "WiZ Tray")?.to_owned(),
+        google_client_secret: value
+            .get("google_client_secret")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        wiz_client_id: required_string(&value, "wiz_client_id", "WiZ Tray")?.to_owned(),
+        wiz_client_secret: required_string(&value, "wiz_client_secret", "WiZ Tray")?.to_owned(),
+    };
+    Ok(Some(oauth))
+}
+
+pub(super) fn has_saved_session() -> bool {
+    token_path().is_ok_and(|path| path.is_file())
+}
+
+pub(super) fn clear_session() -> Result<(), String> {
+    match fs::remove_file(token_path()?) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("No pude desconectar la sesión WiZ Cloud.".to_string()),
+    }
+}
+
+fn write_protected_file(path: &PathBuf, contents: &[u8]) -> Result<(), String> {
+    let temp = path.with_extension("tmp");
+    let mut file = File::create(&temp)
+        .map_err(|_| "No pude guardar de forma segura la sesión WiZ.".to_string())?;
+    file.write_all(contents)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| "No pude guardar de forma segura la sesión WiZ.".to_string())?;
+    drop(file);
+    replace_file(&temp, path)
+        .map_err(|_| "No pude actualizar de forma segura la sesión WiZ.".to_string())
+}
+
+fn replace_file(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn save_refresh_token(token: &str) -> Result<(), String> {
@@ -443,15 +565,7 @@ fn save_refresh_token(token: &str) -> Result<(), String> {
         .ok_or_else(|| "No pude preparar el almacenamiento local de WiZ.".to_string())?;
     fs::create_dir_all(parent)
         .map_err(|_| "No pude preparar el almacenamiento local de WiZ.".to_string())?;
-    let temp = path.with_extension("tmp");
-    let mut file = File::create(&temp)
-        .map_err(|_| "No pude guardar de forma segura la sesión WiZ.".to_string())?;
-    file.write_all(&encrypted)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| "No pude guardar de forma segura la sesión WiZ.".to_string())?;
-    drop(file);
-    fs::rename(&temp, &path)
-        .map_err(|_| "No pude actualizar de forma segura la sesión WiZ.".to_string())
+    write_protected_file(&path, &encrypted)
 }
 
 fn load_refresh_token() -> Result<String, String> {
