@@ -316,7 +316,7 @@ fn perform_cloud_with_token(
     let (expected_state, expected_scene, expected_temp) =
         cloud_expected_state(action).ok_or_else(|| "acción WiZ no reconocida".to_string())?;
     let mut last_error = "El foco no confirmó el cambio en WiZ Cloud.".to_string();
-    // Cloud can briefly return stale state after a scene change, so require an exact read-back.
+    // Cloud can briefly return stale state after a scene change, so read it back until it matches.
     for _ in 0..5 {
         thread::sleep(Duration::from_millis(400));
         match get_pilot() {
@@ -411,16 +411,20 @@ fn cloud_get_pilot(
         .get("status")
         .and_then(Value::as_bool)
         .ok_or_else(|| "WiZ Cloud no devolvió un estado válido.".to_string())?;
+    let temp = pilot
+        .get("temperature")
+        .and_then(Value::as_u64)
+        .and_then(|temperature| u16::try_from(temperature).ok());
+    // WiZ Cloud reports its daylight scene as 4200 K without a scene_id.
+    let scene_id = pilot
+        .get("scene_id")
+        .and_then(Value::as_u64)
+        .and_then(|id| u16::try_from(id).ok())
+        .or_else(|| (state && temp == Some(4200)).then_some(PREFERRED_SCENE));
     Ok(Pilot {
         state,
-        scene_id: pilot
-            .get("scene_id")
-            .and_then(Value::as_u64)
-            .and_then(|id| u16::try_from(id).ok()),
-        temp: pilot
-            .get("temperature")
-            .and_then(Value::as_u64)
-            .and_then(|temperature| u16::try_from(temperature).ok()),
+        scene_id,
+        temp,
     })
 }
 
@@ -867,7 +871,7 @@ mod tests {
                         "id": 123,
                         "current_state": {
                             "status": state,
-                            "scene_id": if reads < 5 { 0 } else { u64::from(PREFERRED_SCENE) },
+                            "scene_id": if reads < 5 { json!(0) } else { Value::Null },
                             "temperature": if reads < 5 { 6500 } else { 4200 }
                         }
                     }]}})

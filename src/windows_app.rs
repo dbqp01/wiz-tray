@@ -18,7 +18,9 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
 };
 use windows_sys::Win32::{
+    Foundation::SYSTEMTIME,
     Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW},
+    System::SystemInformation::GetLocalTime,
     UI::WindowsAndMessaging::{
         MB_ICONERROR, MB_OK, MessageBoxW, SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
     },
@@ -39,7 +41,45 @@ const SCENES: &[(u16, &str)] = &[
     (15, "Enfoque"),
     (16, "Relajarse"),
     (14, "Luz nocturna"),
+    (1, "Océano"),
+    (2, "Romance"),
+    (3, "Atardecer"),
+    (4, "Fiesta"),
+    (5, "Chimenea"),
+    (6, "Acogedor"),
+    (7, "Bosque"),
+    (8, "Colores pastel"),
+    (9, "Despertar"),
+    (10, "Hora de dormir"),
+    (17, "Colores reales"),
+    (18, "Hora de TV"),
+    (19, "Crecimiento de plantas"),
+    (20, "Primavera"),
+    (21, "Verano"),
+    (22, "Otoño"),
+    (23, "Inmersión"),
+    (24, "Jungla"),
+    (25, "Mojito"),
+    (26, "Club"),
+    (27, "Navidad"),
+    (28, "Halloween"),
 ];
+
+const FAVORITE_SCENES: &[u16] = &[PREFERRED_SCENE, 11, 13, 15, 16, 14];
+
+const CANVAS: Color32 = Color32::from_rgb(248, 247, 242);
+const SIDEBAR: Color32 = Color32::from_rgb(250, 248, 243);
+const SURFACE: Color32 = Color32::from_rgb(255, 253, 248);
+const SURFACE_SOFT: Color32 = Color32::from_rgb(247, 244, 235);
+const BORDER: Color32 = Color32::from_rgb(226, 220, 208);
+const BORDER_STRONG: Color32 = Color32::from_rgb(211, 198, 174);
+const INK: Color32 = Color32::from_rgb(27, 57, 47);
+const MUTED: Color32 = Color32::from_rgb(99, 111, 104);
+const ACCENT: Color32 = Color32::from_rgb(236, 177, 64);
+const ACCENT_DARK: Color32 = Color32::from_rgb(151, 93, 14);
+const ACCENT_PALE: Color32 = Color32::from_rgb(255, 242, 213);
+const SUCCESS: Color32 = Color32::from_rgb(51, 118, 82);
+const ERROR: Color32 = Color32::from_rgb(164, 72, 57);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Backend {
@@ -71,6 +111,62 @@ impl Backend {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RoutineAction {
+    Off,
+    Daylight,
+}
+
+impl RoutineAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Daylight => "daylight",
+        }
+    }
+
+    fn from_str(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            Some("off") => Ok(Self::Off),
+            Some("daylight") => Ok(Self::Daylight),
+            _ => Err("La acción guardada de la rutina diaria no es válida.".to_string()),
+        }
+    }
+
+    fn action(self) -> Action {
+        match self {
+            Self::Off => Action::Off,
+            Self::Daylight => Action::Daylight,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Apagar",
+            Self::Daylight => "Encender · Luz de día",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DailyRoutine {
+    enabled: bool,
+    minute_of_day: u16,
+    action: RoutineAction,
+    last_run_day: Option<u32>,
+}
+
+impl Default for DailyRoutine {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            minute_of_day: 22 * 60,
+            action: RoutineAction::Off,
+            last_run_day: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Home,
@@ -89,6 +185,7 @@ struct Preferences {
     cloud_home_id: String,
     cloud_mac: String,
     cloud_white_range: Option<(u16, u16)>,
+    daily_routine: DailyRoutine,
 }
 
 impl Default for Preferences {
@@ -103,6 +200,7 @@ impl Default for Preferences {
             cloud_home_id: String::new(),
             cloud_mac: String::new(),
             cloud_white_range: None,
+            daily_routine: DailyRoutine::default(),
         }
     }
 }
@@ -176,6 +274,8 @@ struct App {
     temperature: u16,
     timer_minutes: u16,
     timer_due: Option<Instant>,
+    routine_draft: DailyRoutine,
+    show_all_scenes: bool,
     status: String,
     last_error: Option<String>,
     last_sync: Option<Instant>,
@@ -264,6 +364,7 @@ impl App {
             .cloud_white_range
             .map(|range| range.1.to_string())
             .unwrap_or_default();
+        let routine_draft = preferences.daily_routine.clone();
         let mut app = Self {
             page: if connections.has(preferences.backend) {
                 Page::Home
@@ -287,6 +388,8 @@ impl App {
             temperature: 4000,
             timer_minutes: 30,
             timer_due: None,
+            routine_draft,
+            show_all_scenes: false,
             status: startup_error.unwrap_or_else(|| "Preparando WiZ…".to_string()),
             last_error: None,
             last_sync: None,
@@ -338,7 +441,7 @@ impl App {
             TrayAction::Control(Action::Off),
             &mut self.tray_actions,
         )?;
-        for (scene_id, name) in SCENES.iter().skip(1) {
+        for (scene_id, name) in SCENES.iter().skip(1).take(FAVORITE_SCENES.len() - 1) {
             append_tray_action(
                 &menu,
                 &format!("Modo · {name}"),
@@ -546,6 +649,7 @@ impl App {
             self.timer_due = None;
             self.start_action(self.preferences.backend, Action::Off, ctx);
         }
+        self.run_daily_routine(ctx);
         if !self.command_running
             && self.connections.has(self.preferences.backend)
             && (self.preferences.backend != Backend::Cloud || has_cloud_session())
@@ -571,6 +675,40 @@ impl App {
         ctx.request_repaint_after(delay);
     }
 
+    fn run_daily_routine(&mut self, ctx: &egui::Context) {
+        let (today, minute) = local_day_and_minute();
+        let Some(action) = routine_action_due(&self.preferences.daily_routine, today, minute)
+        else {
+            return;
+        };
+
+        if self.command_running {
+            return;
+        }
+        let backend = self.preferences.backend;
+        let skip_reason = if !self.connections.has(backend) {
+            Some("Rutina diaria omitida: configura la conexión activa.")
+        } else if backend == Backend::Cloud && !has_cloud_session() {
+            Some("Rutina diaria omitida: inicia sesión en WiZ Cloud.")
+        } else {
+            None
+        };
+
+        self.preferences.daily_routine.last_run_day = Some(today);
+        self.draft.daily_routine.last_run_day = Some(today);
+        self.routine_draft.last_run_day = Some(today);
+        if let Err(error) = save_preferences(&self.preferences) {
+            self.last_error = Some(error.clone());
+            self.set_status(&format!("No se ejecutó la rutina diaria: {error}"));
+            return;
+        }
+        if let Some(reason) = skip_reason {
+            self.set_status(reason);
+            return;
+        }
+        self.start_action(backend, action, ctx);
+    }
+
     fn draw(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let area = ui.available_size();
         let sidebar_width = 196.0_f32.min((area.x * 0.28).max(166.0));
@@ -588,12 +726,12 @@ impl App {
                 Layout::top_down(Align::Min),
                 |ui| {
                     egui::Frame::new()
-                        .fill(rgb(17, 21, 19))
+                        .fill(CANVAS)
                         .stroke(Stroke::NONE)
-                        .inner_margin(Margin::symmetric(16, 14))
+                        .inner_margin(Margin::symmetric(16, 28))
                         .show(ui, |ui| {
                             self.draw_header(ui);
-                            ui.add_space(12.0);
+                            ui.add_space(20.0);
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| match self.page {
@@ -609,27 +747,13 @@ impl App {
 
     fn draw_sidebar(&mut self, ui: &mut egui::Ui) {
         egui::Frame::new()
-            .fill(rgb(14, 18, 16))
+            .fill(SIDEBAR)
             .inner_margin(egui::Margin::symmetric(20, 24))
             .show(ui, |ui| {
-                ui.label(
-                    RichText::new("WiZ")
-                        .size(27.0)
-                        .strong()
-                        .color(rgb(224, 175, 99)),
-                );
-                ui.label(
-                    RichText::new("LUZ, A TU RITMO")
-                        .size(10.0)
-                        .color(rgb(137, 148, 140)),
-                );
+                ui.label(RichText::new("WiZ").size(31.0).strong().color(INK));
+                ui.label(RichText::new("LUZ, A TU RITMO").size(10.0).color(MUTED));
                 ui.add_space(42.0);
-                ui.label(
-                    RichText::new("TU ESPACIO")
-                        .size(9.0)
-                        .strong()
-                        .color(rgb(104, 116, 107)),
-                );
+                ui.label(RichText::new("TU ESPACIO").size(9.0).strong().color(MUTED));
                 ui.add_space(10.0);
                 self.nav_button(ui, Page::Home, "Control");
                 self.nav_button(ui, Page::Routines, "Rutinas");
@@ -637,21 +761,16 @@ impl App {
                 ui.add_space(30.0);
                 ui.separator();
                 ui.add_space(16.0);
-                ui.label(
-                    RichText::new("FOCO ACTUAL")
-                        .size(9.0)
-                        .strong()
-                        .color(rgb(104, 116, 107)),
-                );
+                ui.label(RichText::new("FOCO ACTUAL").size(9.0).strong().color(MUTED));
                 ui.add_space(9.0);
                 let color = if self.pilot.is_some_and(|pilot| pilot.state) {
-                    rgb(224, 175, 99)
+                    ACCENT_DARK
                 } else {
-                    rgb(115, 127, 119)
+                    MUTED
                 };
                 egui::Frame::new()
-                    .fill(rgb(24, 30, 27))
-                    .stroke(Stroke::new(1.0, rgb(39, 47, 42)))
+                    .fill(SURFACE)
+                    .stroke(Stroke::new(1.0, BORDER))
                     .corner_radius(CornerRadius::same(12))
                     .inner_margin(Margin::same(12))
                     .show(ui, |ui| {
@@ -661,14 +780,14 @@ impl App {
                                 RichText::new(&self.preferences.device_name)
                                     .size(12.0)
                                     .strong()
-                                    .color(rgb(231, 233, 226)),
+                                    .color(INK),
                             );
                         });
                         ui.add_space(3.0);
                         ui.label(
                             RichText::new(self.preferences.backend.label())
                                 .size(10.0)
-                                .color(rgb(139, 150, 142)),
+                                .color(MUTED),
                         );
                     });
             });
@@ -676,16 +795,11 @@ impl App {
 
     fn nav_button(&mut self, ui: &mut egui::Ui, page: Page, label: &str) {
         let selected = self.page == page;
-        let color = if selected {
-            rgb(48, 43, 32)
-        } else {
-            rgb(14, 18, 16)
-        };
-        let label_text = RichText::new(label).size(13.0).color(if selected {
-            rgb(229, 184, 108)
-        } else {
-            rgb(181, 188, 180)
-        });
+        let color = if selected { ACCENT_PALE } else { SIDEBAR };
+        let label_text =
+            RichText::new(label)
+                .size(13.0)
+                .color(if selected { ACCENT_DARK } else { INK });
         let label_text = if selected {
             label_text.strong()
         } else {
@@ -711,12 +825,7 @@ impl App {
                 Page::Routines => "Rutinas",
                 Page::Connections => "Configurar WiZ",
             };
-            ui.label(
-                RichText::new(heading)
-                    .size(25.0)
-                    .strong()
-                    .color(rgb(238, 238, 230)),
-            );
+            ui.label(RichText::new(heading).size(29.0).strong().color(INK));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if self.connections.has(Backend::Cloud) {
                     let mut connect = false;
@@ -747,17 +856,13 @@ impl App {
             });
         });
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(&self.status)
-                    .size(11.0)
-                    .color(rgb(150, 159, 151)),
-            );
+            ui.label(RichText::new(&self.status).size(11.0).color(MUTED));
             if let Some(sync) = self.last_sync {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!("Actualizado hace {} s", sync.elapsed().as_secs()))
                             .size(10.0)
-                            .color(rgb(119, 132, 123)),
+                            .color(MUTED),
                     );
                 });
             }
@@ -803,15 +908,16 @@ impl App {
             .map(|pilot| scene_name(pilot.scene_id).to_string())
             .unwrap_or_else(|| "Esperando estado del foco".to_string());
         egui::Frame::new()
-            .fill(rgb(24, 30, 27))
-            .stroke(Stroke::new(1.0, rgb(43, 52, 46)))
+            .fill(SURFACE)
+            .stroke(Stroke::new(1.0, BORDER))
             .corner_radius(CornerRadius::same(18))
             .inner_margin(Margin::same(24))
             .show(ui, |ui| {
                 let content_width = ui.available_width();
+                let compact = content_width < 760.0;
                 ui.horizontal(|ui| {
                     ui.allocate_ui_with_layout(
-                        Vec2::new(content_width * 0.56, 276.0),
+                        Vec2::new(content_width * 0.56, 330.0),
                         Layout::top_down(Align::Min),
                         |ui| {
                             ui.label(
@@ -825,17 +931,17 @@ impl App {
                                 .size(10.0)
                                 .strong()
                                 .color(if state == Some(true) {
-                                    rgb(230, 184, 106)
+                                    ACCENT_DARK
                                 } else {
-                                    rgb(142, 153, 145)
+                                    MUTED
                                 }),
                             );
                             ui.add_space(23.0);
                             ui.label(
                                 RichText::new(&self.preferences.device_name)
-                                    .size(28.0)
+                                    .size(if compact { 30.0 } else { 32.0 })
                                     .strong()
-                                    .color(rgb(240, 239, 231)),
+                                    .color(INK),
                             );
                             ui.add_space(2.0);
                             ui.label(
@@ -844,31 +950,32 @@ impl App {
                                     Some(false) => "Apagada",
                                     None => "Sin lectura",
                                 })
-                                .size(39.0)
+                                .size(if compact { 42.0 } else { 46.0 })
                                 .strong()
                                 .color(if state == Some(true) {
-                                    rgb(235, 187, 107)
+                                    ACCENT_DARK
                                 } else {
-                                    rgb(220, 223, 216)
+                                    MUTED
                                 }),
                             );
-                            ui.label(RichText::new(mode).size(13.0).color(rgb(161, 170, 162)));
-                            ui.add_space(22.0);
+                            ui.label(RichText::new(mode).size(14.0).color(MUTED));
+                            ui.add_space(26.0);
                             ui.horizontal(|ui| {
                                 let toggle_label = if state == Some(true) {
                                     "Apagar"
                                 } else {
                                     "Encender"
                                 };
+                                let toggle_width = if compact { 138.0 } else { 180.0 };
+                                let daylight_width = if compact { 146.0 } else { 190.0 };
+                                let button_height = if compact { 48.0 } else { 56.0 };
                                 if ui
                                     .add_sized(
-                                        [122.0, 44.0],
+                                        [toggle_width, button_height],
                                         egui::Button::new(
-                                            RichText::new(toggle_label)
-                                                .strong()
-                                                .color(rgb(28, 29, 25)),
+                                            RichText::new(toggle_label).strong().color(INK),
                                         )
-                                        .fill(rgb(226, 177, 98))
+                                        .fill(ACCENT)
                                         .corner_radius(CornerRadius::same(9))
                                         .stroke(Stroke::NONE),
                                     )
@@ -883,13 +990,11 @@ impl App {
                                 }
                                 if ui
                                     .add_sized(
-                                        [130.0, 44.0],
-                                        egui::Button::new(
-                                            RichText::new("Luz de día").color(rgb(226, 190, 128)),
-                                        )
-                                        .fill(rgb(37, 45, 40))
-                                        .corner_radius(CornerRadius::same(9))
-                                        .stroke(Stroke::new(1.0, rgb(57, 66, 60))),
+                                        [daylight_width, button_height],
+                                        egui::Button::new(RichText::new("Luz de día").color(INK))
+                                            .fill(SURFACE_SOFT)
+                                            .corner_radius(CornerRadius::same(9))
+                                            .stroke(Stroke::new(1.0, BORDER_STRONG)),
                                     )
                                     .clicked()
                                 {
@@ -907,17 +1012,17 @@ impl App {
                                     self.preferences.backend.label()
                                 ))
                                 .size(11.0)
-                                .color(rgb(133, 145, 136)),
+                                .color(MUTED),
                             );
                         },
                     );
                     ui.separator();
                     ui.allocate_ui_with_layout(
-                        Vec2::new(content_width * 0.39, 276.0),
+                        Vec2::new(content_width * 0.39, 330.0),
                         Layout::top_down(Align::Center),
                         |ui| {
                             let (rect, _) = ui.allocate_exact_size(
-                                Vec2::new(ui.available_width(), 276.0),
+                                Vec2::new(ui.available_width(), 330.0),
                                 Sense::hover(),
                             );
                             paint_bulb(
@@ -944,13 +1049,13 @@ impl App {
         };
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Temperatura").size(17.0).strong());
+                ui.label(RichText::new("Temperatura de color").size(19.0).strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!("{} K", self.temperature))
-                            .size(18.0)
+                            .size(23.0)
                             .strong()
-                            .color(rgb(230, 184, 106)),
+                            .color(ACCENT_DARK),
                     );
                 });
             });
@@ -968,13 +1073,13 @@ impl App {
                 ui.label(
                     RichText::new(format!("{minimum} K · cálida"))
                         .size(10.0)
-                        .color(rgb(196, 161, 112)),
+                        .color(ACCENT_DARK),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!("{maximum} K · fría"))
                             .size(10.0)
-                            .color(rgb(146, 176, 194)),
+                            .color(Color32::from_rgb(79, 127, 161)),
                     );
                 });
             });
@@ -999,14 +1104,10 @@ impl App {
             });
             if ui
                 .add(
-                    egui::Button::new(
-                        RichText::new("Aplicar temperatura")
-                            .strong()
-                            .color(rgb(28, 29, 25)),
-                    )
-                    .fill(rgb(226, 177, 98))
-                    .corner_radius(CornerRadius::same(8))
-                    .stroke(Stroke::NONE),
+                    egui::Button::new(RichText::new("Aplicar temperatura").strong().color(INK))
+                        .fill(ACCENT)
+                        .corner_radius(CornerRadius::same(8))
+                        .stroke(Stroke::NONE),
                 )
                 .clicked()
             {
@@ -1021,59 +1122,68 @@ impl App {
 
     fn draw_scenes_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         card(ui, |ui| {
-            ui.label(RichText::new("Escenas").size(17.0).strong());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Escenas").size(19.0).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .small_button(if self.show_all_scenes {
+                            "Favoritas"
+                        } else {
+                            "Ver todas (28)"
+                        })
+                        .clicked()
+                    {
+                        self.show_all_scenes = !self.show_all_scenes;
+                    }
+                });
+            });
             ui.add_space(10.0);
-            let scene_count = SCENES.len();
+            let show_all = self.show_all_scenes;
+            let scene_count = if show_all {
+                SCENES.len()
+            } else {
+                FAVORITE_SCENES.len()
+            };
             for row in 0..scene_count.div_ceil(2) {
                 ui.horizontal(|ui| {
                     for column in 0..2 {
                         let index = row * 2 + column;
-                        if let Some((scene_id, name)) = SCENES.get(index) {
+                        if let Some((scene_id, name)) = scene_at(index, show_all) {
                             let active =
-                                self.pilot.and_then(|pilot| pilot.scene_id) == Some(*scene_id);
+                                self.pilot.and_then(|pilot| pilot.scene_id) == Some(scene_id);
                             if ui
                                 .add_sized(
-                                    [ui.available_width() / (2 - column) as f32 - 7.0, 48.0],
+                                    [ui.available_width() / (2 - column) as f32 - 7.0, 52.0],
                                     egui::Button::new(
                                         RichText::new(if active {
                                             format!("●  {name}")
                                         } else {
-                                            (*name).to_string()
+                                            name.to_string()
                                         })
-                                        .color(
-                                            if active {
-                                                rgb(230, 184, 106)
-                                            } else {
-                                                rgb(203, 209, 201)
-                                            },
-                                        ),
+                                        .color(if active { ACCENT_DARK } else { INK }),
                                     )
-                                    .fill(if active {
-                                        rgb(54, 46, 32)
-                                    } else {
-                                        rgb(30, 37, 33)
-                                    })
+                                    .fill(if active { ACCENT_PALE } else { SURFACE_SOFT })
                                     .corner_radius(CornerRadius::same(9))
-                                    .stroke(Stroke::new(
-                                        1.0,
-                                        if active {
-                                            rgb(107, 82, 43)
-                                        } else {
-                                            rgb(45, 54, 48)
-                                        },
-                                    )),
+                                    .stroke(Stroke::new(1.0, if active { ACCENT } else { BORDER })),
                                 )
                                 .clicked()
                             {
                                 self.start_action(
                                     self.preferences.backend,
-                                    Action::Scene(*scene_id),
+                                    Action::Scene(scene_id),
                                     ctx,
                                 );
                             }
                         }
                     }
                 });
+            }
+            if show_all {
+                ui.label(
+                    RichText::new("Algunas escenas necesitan un foco WiZ de color.")
+                        .size(10.0)
+                        .color(MUTED),
+                );
             }
         });
     }
@@ -1115,12 +1225,67 @@ impl App {
                     ))
                     .size(14.0)
                     .strong()
-                    .color(rgb(230, 184, 106)),
+                    .color(ACCENT_DARK),
                 );
             }
             ui.add_space(12.0);
-            ui.label(RichText::new("La rutina sigue activa al ocultar la ventana en la bandeja y se cancela al salir de WiZ Tray.").size(11.0).color(rgb(155, 165, 156)));
+            ui.label(RichText::new("La rutina sigue activa al ocultar la ventana en la bandeja y se cancela al salir de WiZ Tray.").size(11.0).color(MUTED));
         });
+        ui.add_space(14.0);
+        let saved_routine = &self.preferences.daily_routine;
+        let saved_status = if saved_routine.enabled {
+            format!(
+                "Activa · todos los días a {:02}:{:02} · {}",
+                saved_routine.minute_of_day / 60,
+                saved_routine.minute_of_day % 60,
+                saved_routine.action.label()
+            )
+        } else {
+            "La rutina diaria está desactivada.".to_string()
+        };
+        let mut save_routine = false;
+        card(ui, |ui| {
+            ui.label(RichText::new("Rutina diaria").size(20.0).strong());
+            ui.label("Programa una acción que se repetirá cada día.");
+            ui.add_space(10.0);
+            ui.checkbox(&mut self.routine_draft.enabled, "Activar rutina diaria");
+            ui.horizontal(|ui| {
+                ui.label("Hora local");
+                let mut hour = self.routine_draft.minute_of_day / 60;
+                let mut minute = self.routine_draft.minute_of_day % 60;
+                ui.add(egui::DragValue::new(&mut hour).range(0..=23).suffix(" h"));
+                ui.label(":");
+                ui.add(
+                    egui::DragValue::new(&mut minute)
+                        .range(0..=59)
+                        .suffix(" min"),
+                );
+                self.routine_draft.minute_of_day = hour * 60 + minute;
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.radio_value(&mut self.routine_draft.action, RoutineAction::Off, "Apagar");
+                ui.radio_value(
+                    &mut self.routine_draft.action,
+                    RoutineAction::Daylight,
+                    "Encender · Luz de día",
+                );
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new(saved_status).size(11.0).color(MUTED));
+            ui.label(RichText::new("Se ejecuta mientras WiZ Tray esté abierta en la bandeja. Cloud necesita una sesión iniciada.").size(10.0).color(MUTED));
+            ui.add_space(8.0);
+            save_routine = ui
+                .add(
+                    egui::Button::new(RichText::new("Guardar rutina diaria").strong().color(INK))
+                        .fill(ACCENT)
+                        .corner_radius(CornerRadius::same(8))
+                        .stroke(Stroke::NONE),
+                )
+                .clicked();
+        });
+        if save_routine {
+            self.save_daily_routine();
+        }
         ui.add_space(14.0);
         card(ui, |ui| {
             ui.label(RichText::new("Accesos rápidos").size(16.0).strong());
@@ -1141,6 +1306,23 @@ impl App {
                 }
             });
         });
+    }
+
+    fn save_daily_routine(&mut self) {
+        let mut preferences = self.preferences.clone();
+        let mut routine = self.routine_draft.clone();
+        routine.last_run_day = preferences.daily_routine.last_run_day;
+        preferences.daily_routine = routine;
+        if let Err(error) = save_preferences(&preferences) {
+            self.last_error = Some(error.clone());
+            self.set_status(&error);
+            return;
+        }
+        self.preferences = preferences;
+        self.draft.daily_routine = self.preferences.daily_routine.clone();
+        self.routine_draft = self.preferences.daily_routine.clone();
+        self.last_error = None;
+        self.set_status("Rutina diaria guardada.");
     }
 
     fn draw_connections(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -1184,11 +1366,7 @@ impl App {
                         .unwrap_or("Export WiZ seleccionado")
                         .to_string()
                 };
-                ui.label(
-                    RichText::new(displayed)
-                        .size(11.0)
-                        .color(rgb(155, 165, 156)),
-                );
+                ui.label(RichText::new(displayed).size(11.0).color(MUTED));
                 if ui.button("Elegir archivo…").clicked()
                     && let Some(path) = rfd::FileDialog::new()
                         .add_filter("Export WiZ", &["json"])
@@ -1246,19 +1424,15 @@ impl App {
             });
             ui.add_space(12.0);
             if let Some(error) = &self.last_error {
-                ui.colored_label(rgb(239, 140, 126), error);
+                ui.colored_label(ERROR, error);
             }
             if ui
                 .add_sized(
                     [170.0, 42.0],
-                    egui::Button::new(
-                        RichText::new("Guardar y probar")
-                            .strong()
-                            .color(rgb(28, 29, 25)),
-                    )
-                    .fill(rgb(226, 177, 98))
-                    .corner_radius(CornerRadius::same(8))
-                    .stroke(Stroke::NONE),
+                    egui::Button::new(RichText::new("Guardar y probar").strong().color(INK))
+                        .fill(ACCENT)
+                        .corner_radius(CornerRadius::same(8))
+                        .stroke(Stroke::NONE),
                 )
                 .clicked()
             {
@@ -1271,7 +1445,7 @@ impl App {
                 ui.label(
                     RichText::new("Configuración local guardada en este perfil de Windows.")
                         .size(11.0)
-                        .color(rgb(144, 192, 148)),
+                        .color(SUCCESS),
                 );
             }
         });
@@ -1291,6 +1465,7 @@ impl App {
         }
         let backend_changed = self.preferences.backend != Backend::Local;
         self.draft.backend = Backend::Local;
+        self.draft.daily_routine = self.preferences.daily_routine.clone();
         save_preferences(&self.draft)?;
         self.preferences = self.draft.clone();
         self.connections.local = Some(local);
@@ -1312,6 +1487,8 @@ impl App {
             ui.add_space(10.0);
             ui.label("La API doméstica de WiZ no está documentada para terceros. Google confirma tu cuenta; WiZ requiere credenciales OAuth privadas propias, que no se incluyen en el repositorio.");
             ui.add_space(14.0);
+            ui.label(RichText::new("1 · Identifica el foco y el hogar").strong());
+            ui.label("Importa el export WiZ para rellenar los datos, o escribe el ID del foco, el ID del hogar y la MAC.");
             text_field(
                 ui,
                 "ID del foco",
@@ -1385,20 +1562,18 @@ impl App {
                         .hint_text("6500")
                         .desired_width(80.0),
                 );
-                ui.label(
-                    RichText::new("opcional")
-                        .size(10.0)
-                        .color(rgb(155, 165, 156)),
-                );
+                ui.label(RichText::new("opcional").size(10.0).color(MUTED));
             });
             ui.add_space(14.0);
+            ui.label(RichText::new("2 · Configura OAuth").strong());
+            ui.label("Necesitas el Client ID privado y el secreto de WiZ. Añade también el Client ID de Google; su secreto es opcional.");
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Credenciales de OAuth").strong());
                 if self.cloud_credentials.is_some() && !self.replace_credentials {
                     ui.label(
                         RichText::new("Protegidas con Windows DPAPI")
                             .size(10.0)
-                            .color(rgb(144, 192, 148)),
+                            .color(SUCCESS),
                     );
                     if ui.small_button("Reemplazar").clicked() {
                         self.replace_credentials = true;
@@ -1419,24 +1594,22 @@ impl App {
                 );
                 secret_field(ui, "Client ID privado de WiZ", &mut self.wiz_client_id);
                 secret_field(ui, "Secreto privado de WiZ", &mut self.wiz_client_secret);
-                ui.label(RichText::new("Al guardar, estos valores se cifran con DPAPI y quedan ligados a tu perfil de Windows.").size(10.0).color(rgb(155, 165, 156)));
+                ui.label(RichText::new("Al guardar, estos valores se cifran con DPAPI y quedan ligados a tu perfil de Windows.").size(10.0).color(MUTED));
             }
             ui.add_space(12.0);
             if let Some(error) = &self.last_error {
-                ui.colored_label(rgb(239, 140, 126), error);
+                ui.colored_label(ERROR, error);
             }
+            ui.label(RichText::new("3 · Guarda y autoriza la sesión").strong());
+            ui.label("Guarda Cloud y luego inicia sesión con Google en el navegador. La app vuelve por 127.0.0.1 y conserva la sesión en este perfil de Windows.");
             ui.horizontal(|ui| {
                 if ui
                     .add_sized(
                         [150.0, 42.0],
-                        egui::Button::new(
-                            RichText::new("Guardar Cloud")
-                                .strong()
-                                .color(rgb(28, 29, 25)),
-                        )
-                        .fill(rgb(226, 177, 98))
-                        .corner_radius(CornerRadius::same(8))
-                        .stroke(Stroke::NONE),
+                        egui::Button::new(RichText::new("Guardar Cloud").strong().color(INK))
+                            .fill(ACCENT)
+                            .corner_radius(CornerRadius::same(8))
+                            .stroke(Stroke::NONE),
                     )
                     .clicked()
                 {
@@ -1472,7 +1645,7 @@ impl App {
                         "Conexión configurada; falta iniciar sesión."
                     })
                     .size(11.0)
-                    .color(rgb(144, 192, 148)),
+                    .color(SUCCESS),
                 );
             }
         });
@@ -1483,6 +1656,7 @@ impl App {
         let mut draft = self.draft.clone();
         draft.backend = Backend::Cloud;
         draft.cloud_white_range = cloud_white_range;
+        draft.daily_routine = self.preferences.daily_routine.clone();
         let mut credentials_to_save = None;
         let mut oauth = self.cloud_credentials.clone();
         if self.replace_credentials
@@ -1553,35 +1727,44 @@ impl eframe::App for App {
         }
         let ctx = ui.ctx().clone();
         egui::Frame::new()
-            .fill(rgb(17, 21, 19))
+            .fill(CANVAS)
             .show(ui, |ui| self.draw(ui, &ctx));
     }
 }
 
 fn apply_theme(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = rgb(17, 21, 19);
-    visuals.window_fill = rgb(21, 26, 23);
-    visuals.extreme_bg_color = rgb(15, 19, 17);
-    visuals.faint_bg_color = rgb(23, 29, 26);
-    visuals.selection.bg_fill = rgb(69, 54, 31);
-    visuals.selection.stroke = Stroke::new(1.0, rgb(226, 177, 98));
-    visuals.widgets.noninteractive.bg_fill = rgb(25, 31, 28);
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, rgb(229, 232, 224));
-    visuals.widgets.inactive.bg_fill = rgb(30, 37, 33);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, rgb(203, 210, 201));
-    visuals.widgets.hovered.bg_fill = rgb(43, 52, 46);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, rgb(240, 239, 231));
-    visuals.widgets.active.bg_fill = rgb(226, 177, 98);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, rgb(28, 29, 25));
-    visuals.widgets.open.bg_fill = rgb(43, 52, 46);
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0, rgb(240, 239, 231));
+    let mut visuals = egui::Visuals::light();
+    visuals.panel_fill = CANVAS;
+    visuals.window_fill = SURFACE;
+    visuals.extreme_bg_color = SURFACE;
+    visuals.faint_bg_color = SURFACE_SOFT;
+    visuals.text_edit_bg_color = Some(SURFACE);
+    visuals.override_text_color = Some(INK);
+    visuals.weak_text_color = Some(MUTED);
+    visuals.hyperlink_color = ACCENT_DARK;
+    visuals.selection.bg_fill = ACCENT_PALE;
+    visuals.selection.stroke = Stroke::new(1.0, ACCENT_DARK);
+    visuals.widgets.noninteractive.bg_fill = CANVAS;
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, INK);
+    visuals.widgets.inactive.bg_fill = SURFACE_SOFT;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, INK);
+    visuals.widgets.hovered.bg_fill = ACCENT_PALE;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, BORDER_STRONG);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, INK);
+    visuals.widgets.active.bg_fill = ACCENT;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_DARK);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, INK);
+    visuals.widgets.open.bg_fill = ACCENT_PALE;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, BORDER_STRONG);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0, INK);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(8);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(8);
     visuals.widgets.active.corner_radius = CornerRadius::same(8);
     visuals.widgets.open.corner_radius = CornerRadius::same(8);
+    ctx.set_theme(egui::ThemePreference::Light);
     ctx.set_visuals(visuals);
-    ctx.style_mut_of(egui::Theme::Dark, |style| {
+    ctx.style_mut_of(egui::Theme::Light, |style| {
         style.spacing.item_spacing = Vec2::new(12.0, 10.0);
         style.spacing.button_padding = Vec2::new(14.0, 9.0);
     });
@@ -1589,8 +1772,8 @@ fn apply_theme(ctx: &egui::Context) {
 
 fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
-        .fill(rgb(24, 30, 27))
-        .stroke(Stroke::new(1.0, rgb(42, 51, 45)))
+        .fill(SURFACE)
+        .stroke(Stroke::new(1.0, BORDER))
         .corner_radius(CornerRadius::same(14))
         .inner_margin(Margin::same(20))
         .show(ui, |ui| {
@@ -1627,7 +1810,7 @@ fn paint_bulb(
     animate: bool,
     time: f64,
 ) {
-    let scale = (rect.height() / 205.0).clamp(1.0, 1.42);
+    let scale = (rect.height() / 205.0).clamp(1.0, 1.7);
     let center = rect.center() + egui::vec2(0.0, -4.0 * scale);
     let on = pilot.is_some_and(|pilot| pilot.state);
     let pulse = if on && animate {
@@ -1640,9 +1823,9 @@ fn paint_bulb(
         .map(|temp| ((6500_u16.saturating_sub(temp).min(4300)) as f32 / 4300.0).clamp(0.0, 1.0))
         .unwrap_or(0.55);
     let glow = if warmth > 0.5 {
-        rgb(245, 179, 94)
+        rgb(240, 177, 79)
     } else {
-        rgb(186, 211, 229)
+        rgb(137, 184, 211)
     };
     if on && animate {
         for layer in (0..6).rev() {
@@ -1655,26 +1838,18 @@ fn paint_bulb(
             );
         }
     }
-    let fill = if on {
-        rgb(255, 230, 174)
-    } else {
-        rgb(70, 80, 74)
-    };
-    let edge = if on {
-        rgb(236, 190, 112)
-    } else {
-        rgb(132, 145, 136)
-    };
-    painter.circle_filled(center + egui::vec2(0.0, -14.0 * scale), 37.0 * scale, fill);
+    let fill = if on { rgb(255, 230, 174) } else { SURFACE_SOFT };
+    let edge = if on { ACCENT_DARK } else { BORDER_STRONG };
+    painter.circle_filled(center + egui::vec2(0.0, -14.0 * scale), 41.0 * scale, fill);
     painter.circle_stroke(
         center + egui::vec2(0.0, -14.0 * scale),
-        37.0 * scale,
+        41.0 * scale,
         Stroke::new(1.0, edge),
     );
     painter.rect_filled(
         egui::Rect::from_center_size(
             center + egui::vec2(0.0, 26.0 * scale),
-            Vec2::new(22.0 * scale, 27.0 * scale),
+            Vec2::new(24.0 * scale, 31.0 * scale),
         ),
         CornerRadius::same((5.0 * scale).round() as u8),
         fill,
@@ -1709,7 +1884,7 @@ fn paint_bulb(
         egui::Align2::CENTER_BOTTOM,
         if on { "EN LÍNEA" } else { "EN ESPERA" },
         egui::FontId::proportional(10.0),
-        rgb(151, 161, 152),
+        MUTED,
     );
 }
 
@@ -1722,6 +1897,105 @@ fn scene_name(scene_id: Option<u16>) -> &'static str {
                 .map(|(_, name)| *name)
         })
         .unwrap_or("Modo actual")
+}
+
+fn local_day_and_minute() -> (u32, u16) {
+    let mut now = SYSTEMTIME::default();
+    unsafe { GetLocalTime(&mut now) };
+    let day = u32::from(now.wYear) * 10_000 + u32::from(now.wMonth) * 100 + u32::from(now.wDay);
+    let minute = u16::from(now.wHour) * 60 + u16::from(now.wMinute);
+    (day, minute)
+}
+
+fn routine_action_due(routine: &DailyRoutine, today: u32, minute: u16) -> Option<Action> {
+    (routine.enabled && routine.minute_of_day == minute && routine.last_run_day != Some(today))
+        .then(|| routine.action.action())
+}
+
+fn scene_at(index: usize, show_all: bool) -> Option<(u16, &'static str)> {
+    let scene_id = if show_all {
+        SCENES.get(index)?.0
+    } else {
+        *FAVORITE_SCENES.get(index)?
+    };
+    SCENES
+        .iter()
+        .find(|(candidate, _)| *candidate == scene_id)
+        .copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DailyRoutine, FAVORITE_SCENES, Preferences, RoutineAction, SCENES, daily_routine_from_json,
+        preferences_from_json, preferences_json, routine_action_due, scene_at,
+    };
+
+    #[test]
+    fn scene_catalog_keeps_favorites_and_optional_modes() {
+        assert_eq!(scene_at(0, false), Some((12, "Luz de día")));
+        assert_eq!(scene_at(9, true), Some((4, "Fiesta")));
+        assert_eq!(scene_at(27, true), Some((28, "Halloween")));
+        assert_eq!(scene_at(SCENES.len(), true), None);
+        assert_eq!(FAVORITE_SCENES.len(), 6);
+        assert!(SCENES.iter().all(|(id, _)| {
+            SCENES
+                .iter()
+                .filter(|(candidate, _)| candidate == id)
+                .count()
+                == 1
+        }));
+    }
+
+    #[test]
+    fn daily_routine_is_persisted_and_rejects_invalid_times() {
+        let mut preferences = Preferences::default();
+        preferences.daily_routine = DailyRoutine {
+            enabled: true,
+            minute_of_day: 7 * 60 + 30,
+            action: RoutineAction::Daylight,
+            last_run_day: Some(20261016),
+        };
+        let saved = preferences_json(&preferences);
+        assert_eq!(
+            preferences_from_json(&saved).unwrap().daily_routine,
+            preferences.daily_routine
+        );
+
+        let mut legacy = preferences_json(&Preferences::default());
+        legacy.as_object_mut().unwrap().remove("daily_routine");
+        assert_eq!(
+            preferences_from_json(&legacy).unwrap().daily_routine,
+            DailyRoutine::default()
+        );
+
+        let invalid = serde_json::json!({
+            "enabled": true,
+            "minute_of_day": 1440,
+            "action": "off"
+        });
+        assert!(daily_routine_from_json(Some(&invalid)).is_err());
+    }
+
+    #[test]
+    fn daily_routine_runs_once_at_its_local_minute() {
+        let routine = DailyRoutine {
+            enabled: true,
+            minute_of_day: 7 * 60 + 30,
+            action: RoutineAction::Daylight,
+            last_run_day: None,
+        };
+        assert!(matches!(
+            routine_action_due(&routine, 20261016, 450),
+            Some(super::Action::Daylight)
+        ));
+        assert!(routine_action_due(&routine, 20261016, 451).is_none());
+        let already_run = DailyRoutine {
+            last_run_day: Some(20261016),
+            ..routine
+        };
+        assert!(routine_action_due(&already_run, 20261016, 450).is_none());
+    }
 }
 
 fn pilot_status(pilot: Pilot) -> String {
@@ -1841,7 +2115,48 @@ fn preferences_json(preferences: &Preferences) -> Value {
             "home_id": preferences.cloud_home_id,
             "mac_address": preferences.cloud_mac,
             "white_range": preferences.cloud_white_range,
+        },
+        "daily_routine": {
+            "enabled": preferences.daily_routine.enabled,
+            "minute_of_day": preferences.daily_routine.minute_of_day,
+            "action": preferences.daily_routine.action.as_str(),
+            "last_run_day": preferences.daily_routine.last_run_day,
         }
+    })
+}
+
+fn daily_routine_from_json(value: Option<&Value>) -> Result<DailyRoutine, String> {
+    let Some(value) = value else {
+        return Ok(DailyRoutine::default());
+    };
+    let enabled = value
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "La rutina diaria guardada debe indicar si está activa.".to_string())?;
+    let minute_of_day = value
+        .get("minute_of_day")
+        .and_then(Value::as_u64)
+        .and_then(|minute| u16::try_from(minute).ok())
+        .filter(|minute| *minute < 24 * 60)
+        .ok_or_else(|| "La hora guardada de la rutina diaria no es válida.".to_string())?;
+    let action = RoutineAction::from_str(value.get("action").and_then(Value::as_str))?;
+    let last_run_day = match value.get("last_run_day") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|day| u32::try_from(day).ok())
+                .filter(|day| (19700101..=99991231).contains(day))
+                .ok_or_else(|| {
+                    "La fecha de última ejecución de la rutina no es válida.".to_string()
+                })?,
+        ),
+    };
+    Ok(DailyRoutine {
+        enabled,
+        minute_of_day,
+        action,
+        last_run_day,
     })
 }
 
@@ -1867,6 +2182,7 @@ fn preferences_from_json(value: &Value) -> Result<Preferences, String> {
         cloud_home_id: string_value(cloud.get("home_id")).unwrap_or_default(),
         cloud_mac: string_value(cloud.get("mac_address")).unwrap_or_default(),
         cloud_white_range,
+        daily_routine: daily_routine_from_json(value.get("daily_routine"))?,
     })
 }
 

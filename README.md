@@ -32,16 +32,20 @@ El export `wiz-home.json` contiene una clave privada de control. WiZ Tray solo g
 
 Cloud puede controlar la luz cuando estás fuera de casa, pero esta app no es un servicio alojado: el computador debe permanecer encendido, conectado a internet y con WiZ Tray abierta en la bandeja.
 
-La API doméstica de WiZ que usa el flujo móvil no está documentada para terceros y WiZ Tray no contiene las credenciales OAuth privadas de WiZ. En **Conexiones > WiZ Cloud** puedes importar el mismo export para rellenar automáticamente el foco y el hogar, o introducir esos IDs a mano. Las credenciales OAuth de Google y WiZ se guardan allí tras obtenerlas por una vía autorizada. Google inicia sesión en el navegador y vuelve a la app por `127.0.0.1`; sus credenciales no reemplazan las de WiZ. Un clon limpio no puede completar Cloud hasta que se proporcionen esos valores. No inventes credenciales ni publiques secretos.
+Configúralo desde **Conexiones > WiZ Cloud**:
 
-Una vez configurado, el inicio de sesión solicita `openid`, `email` y `profile`. El refresh token y las credenciales OAuth se protegen con DPAPI y quedan ligados al perfil de Windows actual. El estado remoto se consulta cada minuto para evitar llamadas innecesarias.
+1. Importa el export WiZ para completar hogar, foco y MAC, o escribe esos datos manualmente.
+2. Introduce el Client ID de Google y las credenciales OAuth privadas de WiZ. El secreto de Google es opcional; el Client ID y el secreto privados de WiZ son necesarios y deben obtenerse por una vía autorizada. Este repositorio no los incluye.
+3. Pulsa **Guardar Cloud** y después **Iniciar sesión con Google**. El navegador solicita `openid`, `email` y `profile` y vuelve a la app por `127.0.0.1`.
+
+Google autentica la cuenta y no reemplaza las credenciales de WiZ. Un clon limpio no puede completar Cloud hasta que se proporcionen valores válidos. Las credenciales y el refresh token se protegen con Windows DPAPI y quedan ligados al perfil actual. El estado remoto se consulta cada minuto. No pegues secretos en el chat ni los subas a GitHub.
 
 WiZ publica una API documentada para instalaciones Pro: <https://docs.pro.wizconnected.com/>. Es una integración distinta a la API doméstica usada aquí.
 
 ## Uso
 
-- **Control**: estado confirmado, encender con Luz de día, apagar, escenas y temperatura.
-- **Rutinas**: programa un apagado único; funciona mientras la app esté en la bandeja.
+- **Control**: estado confirmado, encender con Luz de día, apagar, temperatura y escenas. La vista inicial muestra seis favoritas; **Ver todas** incluye Fiesta, Halloween y otras 22 escenas. Algunos modos dependen del modelo de foco.
+- **Rutinas**: apaga el foco tras un intervalo o guarda una acción diaria para apagarlo o encender Luz de día a una hora local. La rutina diaria funciona mientras WiZ Tray permanezca abierta en la bandeja; Cloud necesita una sesión activa.
 - **Bandeja**: abre el panel o cambia rápidamente encendido, escenas y temperaturas.
 - **Local y Cloud**: guarda ambos modos y cambia entre ellos desde el encabezado del panel.
 
