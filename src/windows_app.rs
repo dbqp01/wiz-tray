@@ -10,7 +10,8 @@ use std::{
 };
 
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Vec2,
+    self, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, RichText, Sense, Stroke,
+    StrokeKind, Vec2,
 };
 use serde_json::{Value, json};
 use tray_icon::{
@@ -27,11 +28,11 @@ use windows_sys::Win32::{
 };
 
 use wiz_tray::{
-    Action, CloudConfig, CloudOAuthConfig, ExportDevice, LightConfig, PREFERRED_SCENE, Pilot,
-    clear_cloud_session, find_signing_key, has_cloud_session, load_cloud_credentials,
-    normalize_mac, parse_cloud_id, parse_cloud_oauth, parse_export_devices, parse_key,
-    parse_white_range, perform, perform_cloud, save_cloud_credentials, temperature_options,
-    validate_cloud_config,
+    Action, CloudConfig, CloudOAuthConfig, DiscoveredLight, ExportDevice, LightConfig,
+    PREFERRED_SCENE, Pilot, clear_cloud_session, discover_lights, find_signing_key,
+    has_cloud_session, load_cloud_credentials, normalize_mac, parse_cloud_id, parse_cloud_oauth,
+    parse_export_devices, parse_key, parse_white_range, perform, perform_cloud,
+    save_cloud_credentials, temperature_options, validate_cloud_config,
 };
 
 const SCENES: &[(u16, &str)] = &[
@@ -114,6 +115,7 @@ impl Backend {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RoutineAction {
     Off,
+    On,
     Daylight,
 }
 
@@ -121,6 +123,7 @@ impl RoutineAction {
     fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
+            Self::On => "on",
             Self::Daylight => "daylight",
         }
     }
@@ -128,6 +131,7 @@ impl RoutineAction {
     fn from_str(value: Option<&str>) -> Result<Self, String> {
         match value {
             Some("off") => Ok(Self::Off),
+            Some("on") => Ok(Self::On),
             Some("daylight") => Ok(Self::Daylight),
             _ => Err("La acción guardada de la rutina diaria no es válida.".to_string()),
         }
@@ -136,6 +140,7 @@ impl RoutineAction {
     fn action(self) -> Action {
         match self {
             Self::Off => Action::Off,
+            Self::On => Action::On,
             Self::Daylight => Action::Daylight,
         }
     }
@@ -143,6 +148,7 @@ impl RoutineAction {
     fn label(self) -> &'static str {
         match self {
             Self::Off => "Apagar",
+            Self::On => "Encender",
             Self::Daylight => "Encender · Luz de día",
         }
     }
@@ -253,6 +259,7 @@ enum TrayAction {
 enum UiEvent {
     Menu(MenuEvent),
     Finished(Backend, Result<Pilot, String>),
+    Discovered(Result<Vec<DiscoveredLight>, String>),
 }
 
 struct App {
@@ -272,6 +279,11 @@ struct App {
     setup_tab: Backend,
     pilot: Option<Pilot>,
     temperature: u16,
+    brightness: u8,
+    color: [u8; 3],
+    visual_color: [f32; 3],
+    discovered: Vec<DiscoveredLight>,
+    discovery_running: bool,
     timer_minutes: u16,
     timer_due: Option<Instant>,
     routine_draft: DailyRoutine,
@@ -386,6 +398,11 @@ impl App {
             cloud_maximum,
             pilot: None,
             temperature: 4000,
+            brightness: 100,
+            color: [255, 214, 140],
+            visual_color: [240.0 / 255.0, 177.0 / 255.0, 79.0 / 255.0],
+            discovered: Vec::new(),
+            discovery_running: false,
             timer_minutes: 30,
             timer_due: None,
             routine_draft,
@@ -543,6 +560,12 @@ impl App {
                 if let Some(temperature) = pilot.temp {
                     self.temperature = temperature;
                 }
+                if let Some(dimming) = pilot.dimming {
+                    self.brightness = dimming.clamp(1, 100);
+                }
+                if let Some((red, green, blue)) = pilot.color {
+                    self.color = [red, green, blue];
+                }
                 if let Some(tray) = &self.tray
                     && let Ok(icon) = make_icon(pilot.state)
                 {
@@ -598,6 +621,25 @@ impl App {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 UiEvent::Finished(backend, result) => self.finish_action(backend, result),
+                UiEvent::Discovered(result) => {
+                    self.discovery_running = false;
+                    match result {
+                        Ok(lights) => {
+                            self.discovered = lights;
+                            let message = if self.discovered.is_empty() {
+                                "No encontré focos en esta red. Revisa que el foco y la PC estén en la misma Wi-Fi."
+                            } else {
+                                "Focos encontrados. Elige uno para usarlo."
+                            };
+                            self.set_status(message);
+                            self.last_error = None;
+                        }
+                        Err(error) => {
+                            self.last_error = Some(error.clone());
+                            self.set_status(&error);
+                        }
+                    }
+                }
                 UiEvent::Menu(event) => {
                     let Some(action) = self.tray_actions.get(&event.id).cloned() else {
                         continue;
@@ -631,8 +673,40 @@ impl App {
         }
     }
 
+    fn start_discovery(&mut self, ctx: &egui::Context) {
+        if self.discovery_running {
+            return;
+        }
+        self.discovery_running = true;
+        self.discovered.clear();
+        self.last_error = None;
+        self.set_status("Buscando focos WiZ en tu red local…");
+        let sender = self.sender.clone();
+        thread::spawn(move || {
+            let _ = sender.send(UiEvent::Discovered(discover_lights()));
+        });
+        ctx.request_repaint();
+    }
+
     fn tick(&mut self, ctx: &egui::Context) {
         self.handle_events(ctx);
+        let target = self.pilot.and_then(|pilot| {
+            pilot.color.or_else(|| {
+                pilot.temp.map(|temp| {
+                    if temp <= 4350 {
+                        (240, 177, 79)
+                    } else {
+                        (137, 184, 211)
+                    }
+                })
+            })
+        });
+        if let Some((red, green, blue)) = target {
+            let factor = (ctx.input(|input| input.stable_dt).min(0.1) * 6.0).min(1.0);
+            for (channel, value) in self.visual_color.iter_mut().zip([red, green, blue]) {
+                *channel += (value as f32 / 255.0 - *channel) * factor;
+            }
+        }
         if self.initial_refresh_pending {
             self.initial_refresh_pending = false;
             if self.connections.has(self.preferences.backend)
@@ -879,6 +953,17 @@ impl App {
         let available = ui.available_width();
         if available >= 720.0 {
             ui.columns(2, |columns| {
+                self.draw_brightness_card(&mut columns[0], ctx);
+                self.draw_color_card(&mut columns[1], ctx);
+            });
+        } else {
+            self.draw_brightness_card(ui, ctx);
+            ui.add_space(14.0);
+            self.draw_color_card(ui, ctx);
+        }
+        ui.add_space(16.0);
+        if available >= 720.0 {
+            ui.columns(2, |columns| {
                 self.draw_temperature_card(&mut columns[0], ctx);
                 self.draw_scenes_card(&mut columns[1], ctx);
             });
@@ -887,6 +972,146 @@ impl App {
             ui.add_space(14.0);
             self.draw_scenes_card(ui, ctx);
         }
+    }
+
+    fn draw_brightness_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Brillo").size(19.0).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{} %", self.brightness))
+                            .size(23.0)
+                            .strong()
+                            .color(ACCENT_DARK),
+                    );
+                });
+            });
+            ui.label(
+                RichText::new("Intensidad de la luz")
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            ui.add_space(14.0);
+            ui.spacing_mut().slider_width = ui.available_width();
+            ui.add(egui::Slider::new(&mut self.brightness, 1..=100).show_value(false));
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                for preset in [25, 50, 75, 100] {
+                    if ui
+                        .selectable_label(self.brightness == preset, format!("{preset} %"))
+                        .clicked()
+                    {
+                        self.brightness = preset;
+                        self.start_action(
+                            self.preferences.backend,
+                            Action::Brightness(preset),
+                            ctx,
+                        );
+                    }
+                }
+            });
+            ui.add_space(8.0);
+            if ui
+                .add_sized(
+                    [ui.available_width(), 40.0],
+                    egui::Button::new(RichText::new("Aplicar brillo").strong().color(INK))
+                        .fill(ACCENT)
+                        .corner_radius(CornerRadius::same(8))
+                        .stroke(Stroke::NONE),
+                )
+                .clicked()
+            {
+                self.start_action(
+                    self.preferences.backend,
+                    Action::Brightness(self.brightness),
+                    ctx,
+                );
+            }
+        });
+    }
+
+    fn draw_color_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        const PRESETS: &[(u8, u8, u8, &str)] = &[
+            (255, 0, 0, "Rojo"),
+            (255, 110, 0, "Naranja"),
+            (255, 200, 0, "Amarillo"),
+            (40, 200, 90, "Verde"),
+            (0, 180, 220, "Cian"),
+            (40, 90, 255, "Azul"),
+            (150, 60, 255, "Violeta"),
+            (255, 60, 150, "Rosa"),
+        ];
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Color").size(19.0).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "#{:02X}{:02X}{:02X}",
+                            self.color[0], self.color[1], self.color[2]
+                        ))
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                });
+            });
+            ui.label(
+                RichText::new("Ambiente para focos de color")
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            ui.add_space(12.0);
+            let active_color = self.pilot.and_then(|pilot| pilot.color);
+            ui.horizontal_wrapped(|ui| {
+                for (red, green, blue, name) in PRESETS {
+                    let color = Color32::from_rgb(*red, *green, *blue);
+                    let active = active_color == Some((*red, *green, *blue));
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+                    let response = response
+                        .on_hover_text(*name)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if response.clicked() {
+                        self.color = [*red, *green, *blue];
+                        self.start_action(
+                            self.preferences.backend,
+                            Action::Color(*red, *green, *blue),
+                            ctx,
+                        );
+                    }
+                    let painter = ui.painter();
+                    painter.rect_filled(rect.shrink(2.0), CornerRadius::same(9), color);
+                    if active {
+                        painter.rect_stroke(
+                            rect.shrink(1.0),
+                            CornerRadius::same(10),
+                            Stroke::new(2.0, INK),
+                            StrokeKind::Inside,
+                        );
+                    } else if response.hovered() {
+                        painter.rect_stroke(
+                            rect.shrink(1.0),
+                            CornerRadius::same(10),
+                            Stroke::new(1.0, BORDER_STRONG),
+                            StrokeKind::Inside,
+                        );
+                    }
+                }
+            });
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Personalizado").size(12.0).color(MUTED));
+                ui.color_edit_button_srgb(&mut self.color);
+                if ui.button("Aplicar color").clicked() {
+                    self.start_action(
+                        self.preferences.backend,
+                        Action::Color(self.color[0], self.color[1], self.color[2]),
+                        ctx,
+                    );
+                }
+            });
+        });
     }
 
     fn draw_setup_prompt(&mut self, ui: &mut egui::Ui) {
@@ -907,10 +1132,22 @@ impl App {
             .pilot
             .map(|pilot| scene_name(pilot.scene_id).to_string())
             .unwrap_or_else(|| "Esperando estado del foco".to_string());
+        let time = ctx.input(|input| input.time);
+        let pulse = if self.animations_enabled && state == Some(true) {
+            ((time * 1.5).sin() * 0.5 + 0.5) as f32
+        } else {
+            0.0
+        };
         egui::Frame::new()
             .fill(SURFACE)
-            .stroke(Stroke::new(1.0, BORDER))
+            .stroke(Stroke::new(1.0, mix(BORDER, ACCENT, 0.12 + pulse * 0.3)))
             .corner_radius(CornerRadius::same(18))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 3],
+                blur: 20,
+                spread: 0,
+                color: Color32::from_black_alpha(12),
+            })
             .inner_margin(Margin::same(24))
             .show(ui, |ui| {
                 let content_width = ui.available_width();
@@ -931,7 +1168,7 @@ impl App {
                                 .size(10.0)
                                 .strong()
                                 .color(if state == Some(true) {
-                                    ACCENT_DARK
+                                    mix(ACCENT_DARK, ACCENT, pulse * 0.6)
                                 } else {
                                     MUTED
                                 }),
@@ -1006,14 +1243,26 @@ impl App {
                                 }
                             });
                             ui.add_space(14.0);
-                            ui.label(
-                                RichText::new(format!(
-                                    "Conexión · {}",
-                                    self.preferences.backend.label()
-                                ))
-                                .size(11.0)
-                                .color(MUTED),
-                            );
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Conexión · {}",
+                                        self.preferences.backend.label()
+                                    ))
+                                    .size(11.0)
+                                    .color(MUTED),
+                                );
+                                if let Some(pilot) = self.pilot {
+                                    if let Some(dimming) = pilot.dimming {
+                                        ui.label(
+                                            RichText::new(format!("· Brillo {dimming} %"))
+                                                .size(11.0)
+                                                .color(MUTED),
+                                        );
+                                    }
+                                    paint_signal(ui, pilot.rssi);
+                                }
+                            });
                         },
                     );
                     ui.separator();
@@ -1030,7 +1279,8 @@ impl App {
                                 rect,
                                 self.pilot,
                                 self.animations_enabled,
-                                ctx.input(|input| input.time),
+                                time,
+                                self.visual_color,
                             );
                         },
                     );
@@ -1151,22 +1401,8 @@ impl App {
                         if let Some((scene_id, name)) = scene_at(index, show_all) {
                             let active =
                                 self.pilot.and_then(|pilot| pilot.scene_id) == Some(scene_id);
-                            if ui
-                                .add_sized(
-                                    [ui.available_width() / (2 - column) as f32 - 7.0, 52.0],
-                                    egui::Button::new(
-                                        RichText::new(if active {
-                                            format!("●  {name}")
-                                        } else {
-                                            name.to_string()
-                                        })
-                                        .color(if active { ACCENT_DARK } else { INK }),
-                                    )
-                                    .fill(if active { ACCENT_PALE } else { SURFACE_SOFT })
-                                    .corner_radius(CornerRadius::same(9))
-                                    .stroke(Stroke::new(1.0, if active { ACCENT } else { BORDER })),
-                                )
-                                .clicked()
+                            let width = ui.available_width() / (2 - column) as f32 - 7.0;
+                            if scene_card(ui, name, scene_color(scene_id), active, width).clicked()
                             {
                                 self.start_action(
                                     self.preferences.backend,
@@ -1266,6 +1502,11 @@ impl App {
                 ui.radio_value(&mut self.routine_draft.action, RoutineAction::Off, "Apagar");
                 ui.radio_value(
                     &mut self.routine_draft.action,
+                    RoutineAction::On,
+                    "Encender",
+                );
+                ui.radio_value(
+                    &mut self.routine_draft.action,
                     RoutineAction::Daylight,
                     "Encender · Luz de día",
                 );
@@ -1355,10 +1596,80 @@ impl App {
             ui.label(RichText::new("1 · Activa el control local").strong());
             ui.label("En WiZ: Ajustes → Seguridad → activa la comunicación local.");
             ui.add_space(8.0);
-            ui.label(RichText::new("2 · Importa el export de tu hogar").strong());
+            ui.label(RichText::new("2 · Encuentra el foco").strong());
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !self.discovery_running,
+                        egui::Button::new("Buscar focos en mi red"),
+                    )
+                    .clicked()
+                {
+                    self.start_discovery(ctx);
+                }
+                if self.discovery_running {
+                    ui.spinner();
+                    ui.label(RichText::new("Escaneando la red…").size(11.0).color(MUTED));
+                }
+            });
+            if !self.discovered.is_empty() {
+                ui.add_space(6.0);
+                let mut chosen = None;
+                for light in &self.discovered {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(light.ip.to_string()).monospace().size(12.0));
+                        ui.label(
+                            RichText::new(format!("· {}", short_mac(&light.mac)))
+                                .size(11.0)
+                                .color(MUTED),
+                        );
+                        ui.label(
+                            RichText::new(if light.state { "Encendida" } else { "Apagada" })
+                                .size(11.0)
+                                .color(if light.state { SUCCESS } else { MUTED }),
+                        );
+                        if ui.small_button("Usar y conectar").clicked() {
+                            chosen = Some(light.clone());
+                        }
+                    });
+                }
+                if let Some(light) = chosen {
+                    self.use_discovered_light(&light);
+                    match self.save_local_setup() {
+                        Ok(()) => self.start_action(Backend::Local, Action::Refresh, ctx),
+                        Err(error) => self.last_error = Some(error),
+                    }
+                }
+            }
+            ui.add_space(8.0);
+            ui.label(RichText::new("3 · Datos del foco").strong());
+            ui.horizontal(|ui| {
+                ui.label("IP local");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.draft.local_ip)
+                        .hint_text("192.168.1.25")
+                        .desired_width(150.0),
+                );
+                ui.label("MAC");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.draft.local_mac)
+                        .hint_text("AA:BB:CC:DD:EE:FF")
+                        .desired_width(160.0),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("Nombre");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.draft.device_name)
+                        .hint_text("Sala")
+                        .desired_width(220.0),
+                );
+            });
+            ui.add_space(8.0);
+            ui.label(RichText::new("4 · Token de firma (opcional)").strong());
             ui.horizontal(|ui| {
                 let displayed = if self.draft.local_export.is_empty() {
-                    "Aún no has elegido wiz-home.json".to_string()
+                    "Sin export: comandos sin firma".to_string()
                 } else {
                     Path::new(&self.draft.local_export)
                         .file_name()
@@ -1367,7 +1678,7 @@ impl App {
                         .to_string()
                 };
                 ui.label(RichText::new(displayed).size(11.0).color(MUTED));
-                if ui.button("Elegir archivo…").clicked()
+                if ui.button("Elegir export…").clicked()
                     && let Some(path) = rfd::FileDialog::new()
                         .add_filter("Export WiZ", &["json"])
                         .set_title("Selecciona el export local de WiZ")
@@ -1386,41 +1697,51 @@ impl App {
                         Err(error) => self.last_error = Some(error),
                     }
                 }
-            });
-            ui.label("El export contiene una clave privada de control. Se queda en tu equipo; no lo compartas ni lo subas a GitHub.");
-            if !self.export_devices.is_empty() {
-                egui::ComboBox::from_label("Foco del export")
-                    .selected_text(selected_device_name(
-                        &self.export_devices,
-                        &self.draft.local_mac,
-                    ))
-                    .show_ui(ui, |ui| {
-                        for device in &self.export_devices {
-                            ui.selectable_value(
-                                &mut self.draft.local_mac,
-                                device.mac.clone(),
-                                &device.name,
-                            );
+                if !self.export_devices.is_empty() {
+                    let devices = self.export_devices.clone();
+                    let mut selected_mac = normalize_mac(&self.draft.local_mac);
+                    egui::ComboBox::from_label("Foco")
+                        .selected_text(selected_device_name(&devices, &selected_mac))
+                        .show_ui(ui, |ui| {
+                            for device in &devices {
+                                ui.selectable_value(
+                                    &mut selected_mac,
+                                    device.mac.clone(),
+                                    &device.name,
+                                );
+                            }
+                        });
+                    if selected_mac != normalize_mac(&self.draft.local_mac) {
+                        self.draft.local_mac = selected_mac;
+                        if let Some(device) = devices
+                            .iter()
+                            .find(|device| device.mac == self.draft.local_mac)
+                        {
+                            self.draft.device_name = device.name.clone();
                         }
-                    });
-            }
-            ui.add_space(8.0);
-            ui.label(RichText::new("3 · Indica la dirección del foco").strong());
-            ui.horizontal(|ui| {
-                ui.label("IP local");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.draft.local_ip)
-                        .hint_text("192.168.1.25")
-                        .desired_width(180.0),
-                );
+                    }
+                }
             });
-            ui.horizontal(|ui| {
-                ui.label("Nombre");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.draft.device_name)
-                        .hint_text("Sala")
-                        .desired_width(220.0),
-                );
+            let export_has_light = self
+                .export_devices
+                .iter()
+                .any(|device| device.mac == normalize_mac(&self.draft.local_mac));
+            ui.label(
+                RichText::new(if self.draft.local_export.trim().is_empty() {
+                    "Sin token: la app enviará comandos locales sin firma. Funciona en muchos firmwares; si tu foco los rechaza, importa el export."
+                } else if export_has_light {
+                    "Export cargado para este foco: si contiene la clave, los comandos se firman."
+                } else {
+                    "El export no contiene este foco; se usará sin token."
+                })
+                .size(11.0)
+                .color(MUTED),
+            );
+            ui.label("El export contiene una clave privada de control. Se queda en tu equipo; no lo compartas ni lo subas a GitHub.");
+            ui.collapsing("¿Hace falta el token? ¿Cómo se encuentra el foco?", |ui| {
+                ui.label("La app habla UDP 38899 directamente con el foco. El token es la clave HMAC del export: algunos firmwares nuevos rechazan comandos sin firma, otros (como la mayoría de focos domésticos) los aceptan.");
+                ui.label("La búsqueda escanea tu subred /24 con getPilot sin firma y muestra IP + MAC. Después puedes guardar sin token. Si el foco no aparece, escribe la IP y la MAC a mano.");
+                ui.label("Todo queda en tu red local: no se envía nada a WiZ ni a Google.");
             });
             ui.add_space(12.0);
             if let Some(error) = &self.last_error {
@@ -1451,17 +1772,30 @@ impl App {
         });
     }
 
-    fn save_local_setup(&mut self) -> Result<(), String> {
-        let local = build_local_config(&self.draft)?.ok_or_else(|| {
-            "Elige el export, el foco y una dirección IP local válida.".to_string()
-        })?;
-        let selected = self
+    fn use_discovered_light(&mut self, light: &DiscoveredLight) {
+        self.draft.local_ip = light.ip.to_string();
+        self.draft.local_mac = light.mac.clone();
+        self.draft.device_name = self
             .export_devices
             .iter()
-            .find(|device| device.mac == self.draft.local_mac)
-            .ok_or_else(|| "El foco seleccionado ya no aparece en el export WiZ.".to_string())?;
+            .find(|device| device.mac == light.mac)
+            .map(|device| device.name.clone())
+            .unwrap_or_else(|| format!("Foco WiZ · {}", short_mac(&light.mac)));
+        self.last_error = None;
+        self.set_status(&format!("Foco seleccionado: {}", self.draft.device_name));
+    }
+
+    fn save_local_setup(&mut self) -> Result<(), String> {
+        let local = build_local_config(&self.draft)?.ok_or_else(|| {
+            "Escribe la IP y la MAC del foco, o usa Buscar focos en mi red.".to_string()
+        })?;
         if self.draft.device_name.trim().is_empty() {
-            self.draft.device_name = selected.name.clone();
+            self.draft.device_name = self
+                .export_devices
+                .iter()
+                .find(|device| device.mac == self.draft.local_mac)
+                .map(|device| device.name.clone())
+                .unwrap_or_else(|| format!("Foco WiZ · {}", short_mac(&self.draft.local_mac)));
         }
         let backend_changed = self.preferences.backend != Backend::Local;
         self.draft.backend = Backend::Local;
@@ -1486,6 +1820,26 @@ impl App {
             ui.label("Control remoto mientras este equipo siga encendido, conectado a internet y WiZ Tray permanezca abierto en la bandeja.");
             ui.add_space(10.0);
             ui.label("La API doméstica de WiZ no está documentada para terceros. Google confirma tu cuenta; WiZ requiere credenciales OAuth privadas propias, que no se incluyen en el repositorio.");
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                let checks = [
+                    (
+                        "Foco y hogar",
+                        !self.draft.cloud_device_id.trim().is_empty()
+                            && !self.draft.cloud_home_id.trim().is_empty()
+                            && !self.draft.cloud_mac.trim().is_empty(),
+                    ),
+                    ("Credenciales", self.cloud_credentials.is_some()),
+                    ("Sesión", has_cloud_session()),
+                ];
+                for (label, done) in checks {
+                    ui.label(
+                        RichText::new(format!("{} {label}", if done { "✓" } else { "○" }))
+                            .size(11.0)
+                            .color(if done { SUCCESS } else { MUTED }),
+                    );
+                }
+            });
             ui.add_space(14.0);
             ui.label(RichText::new("1 · Identifica el foco y el hogar").strong());
             ui.label("Importa el export WiZ para rellenar los datos, o escribe el ID del foco, el ID del hogar y la MAC.");
@@ -1567,6 +1921,32 @@ impl App {
             ui.add_space(14.0);
             ui.label(RichText::new("2 · Configura OAuth").strong());
             ui.label("Necesitas el Client ID privado y el secreto de WiZ. Añade también el Client ID de Google; su secreto es opcional.");
+            ui.collapsing("Guía: cómo obtener estas credenciales", |ui| {
+                ui.label(RichText::new("1 · Google").strong());
+                ui.label("Crea un cliente OAuth de tipo «App de escritorio». No hace falta habilitar APIs ni registrar la URL de retorno: la app abre http://127.0.0.1 con un puerto dinámico y Google acepta ese loopback en clientes Desktop.");
+                ui.horizontal(|ui| {
+                    ui.hyperlink_to(
+                        "Abrir Google Cloud Console",
+                        "https://console.cloud.google.com/apis/credentials",
+                    );
+                    ui.hyperlink_to(
+                        "Pantalla de consentimiento",
+                        "https://console.cloud.google.com/apis/credentials/consent",
+                    );
+                });
+                ui.label("Si el proyecto está en modo prueba, agrega tu cuenta como usuario de prueba.");
+                ui.add_space(8.0);
+                ui.label(RichText::new("2 · WiZ").strong());
+                ui.label("El Client ID y el secreto son los que usa la app oficial de WiZ para su API doméstica. WiZ no los publica: se obtienen del cliente oficial en un dispositivo propio. No los compartas ni los subas al repositorio.");
+                ui.add_space(8.0);
+                ui.label(RichText::new("3 · Guarda y autoriza").strong());
+                ui.label("Pega los valores, pulsa Guardar Cloud y luego Iniciar sesión con Google. El navegador vuelve solo a la app y la sesión queda cifrada con DPAPI.");
+                ui.label(
+                    RichText::new("Errores típicos: redirect_uri_mismatch → usa un cliente Desktop; invalid_client → ID o secreto incorrectos; access_denied → falta tu usuario de prueba.")
+                        .size(11.0)
+                        .color(MUTED),
+                );
+            });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Credenciales de OAuth").strong());
                 if self.cloud_credentials.is_some() && !self.replace_credentials {
@@ -1599,6 +1979,9 @@ impl App {
             ui.add_space(12.0);
             if let Some(error) = &self.last_error {
                 ui.colored_label(ERROR, error);
+                if let Some(hint) = cloud_error_hint(error) {
+                    ui.label(RichText::new(hint).size(11.0).color(MUTED));
+                }
             }
             ui.label(RichText::new("3 · Guarda y autoriza la sesión").strong());
             ui.label("Guarda Cloud y luego inicia sesión con Google en el navegador. La app vuelve por 127.0.0.1 y conserva la sesión en este perfil de Windows.");
@@ -1628,6 +2011,16 @@ impl App {
                     self.set_backend(Backend::Cloud);
                     self.page = Page::Home;
                     self.start_action(Backend::Cloud, Action::Connect, ctx);
+                }
+                if self.connections.has(Backend::Cloud) && ui.button("Probar conexión").clicked() {
+                    self.set_backend(Backend::Cloud);
+                    self.page = Page::Home;
+                    let action = if has_cloud_session() {
+                        Action::Refresh
+                    } else {
+                        Action::Connect
+                    };
+                    self.start_action(Backend::Cloud, action, ctx);
                 }
                 if has_cloud_session() && ui.small_button("Desconectar sesión").clicked() {
                     if let Err(error) = clear_cloud_session() {
@@ -1775,6 +2168,12 @@ fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
         .corner_radius(CornerRadius::same(14))
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 2],
+            blur: 14,
+            spread: 0,
+            color: Color32::from_black_alpha(10),
+        })
         .inner_margin(Margin::same(20))
         .show(ui, |ui| {
             ui.with_layout(Layout::top_down(Align::Min), add_contents);
@@ -1803,48 +2202,100 @@ fn secret_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     });
 }
 
+fn paint_signal(ui: &mut egui::Ui, rssi: Option<i8>) {
+    let Some(rssi) = rssi else {
+        return;
+    };
+    let active_bars = match rssi {
+        value if value >= -55 => 4,
+        value if value >= -65 => 3,
+        value if value >= -75 => 2,
+        _ => 1,
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(22.0, 13.0), Sense::hover());
+    let painter = ui.painter();
+    for bar in 0..4 {
+        let height = 4.0 + bar as f32 * 3.0;
+        let bar_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + bar as f32 * 5.0, rect.bottom() - height),
+            egui::pos2(rect.left() + bar as f32 * 5.0 + 3.0, rect.bottom()),
+        );
+        painter.rect_filled(
+            bar_rect,
+            CornerRadius::same(1),
+            if bar < active_bars { SUCCESS } else { BORDER },
+        );
+    }
+    response.on_hover_text(format!("Señal Wi-Fi: {rssi} dBm"));
+}
+
 fn paint_bulb(
     painter: &egui::Painter,
     rect: egui::Rect,
     pilot: Option<Pilot>,
     animate: bool,
     time: f64,
+    visual: [f32; 3],
 ) {
     let scale = (rect.height() / 205.0).clamp(1.0, 1.7);
     let center = rect.center() + egui::vec2(0.0, -4.0 * scale);
     let on = pilot.is_some_and(|pilot| pilot.state);
     let pulse = if on && animate {
-        (time as f32 * 0.7).sin() * 0.5 + 0.5
+        (time as f32 * 0.9).sin() * 0.5 + 0.5
     } else {
         0.0
     };
-    let warmth = pilot
-        .and_then(|pilot| pilot.temp)
-        .map(|temp| ((6500_u16.saturating_sub(temp).min(4300)) as f32 / 4300.0).clamp(0.0, 1.0))
-        .unwrap_or(0.55);
-    let glow = if warmth > 0.5 {
-        rgb(240, 177, 79)
-    } else {
-        rgb(137, 184, 211)
-    };
+    let glow = rgb(
+        (visual[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (visual[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (visual[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+    );
+    let lit = mix(glow, rgb(255, 250, 235), 0.45);
+    let dimming = pilot
+        .and_then(|pilot| pilot.dimming)
+        .unwrap_or(100)
+        .min(100) as f32
+        / 100.0;
     if on && animate {
         for layer in (0..6).rev() {
-            let radius = (43.0 + layer as f32 * 14.0 + pulse * 2.0) * scale;
-            let alpha = 5 + (5 - layer) as u8 * 4;
+            let radius = (43.0 + layer as f32 * 14.0 + pulse * 5.0) * scale;
+            let alpha = ((5 + (5 - layer) as u8 * 4) as f32
+                * (0.35 + 0.65 * dimming)
+                * (0.85 + 0.3 * pulse)) as u8;
             painter.circle_filled(
                 center,
                 radius,
                 Color32::from_rgba_unmultiplied(glow.r(), glow.g(), glow.b(), alpha),
             );
         }
+        // Chispas flotando: posición determinista a partir del tiempo.
+        for spark in 0..10 {
+            let phase = (time as f32 * 0.22 + spark as f32 * 0.37).fract();
+            let angle = spark as f32 * 2.399 + time as f32 * 0.18;
+            let radius = (34.0 + spark as f32 * 3.0 + phase * 26.0) * scale;
+            let position = center
+                + egui::vec2(
+                    angle.cos() * radius,
+                    angle.sin() * radius * 0.7 - (14.0 + phase * 34.0) * scale,
+                );
+            let alpha = ((1.0 - phase) * 90.0 * (0.3 + 0.7 * dimming)) as u8;
+            painter.circle_filled(
+                position,
+                (1.1 + phase * 1.4) * scale,
+                Color32::from_rgba_unmultiplied(glow.r(), glow.g(), glow.b(), alpha),
+            );
+        }
     }
-    let fill = if on { rgb(255, 230, 174) } else { SURFACE_SOFT };
+    let fill = if on { lit } else { SURFACE_SOFT };
     let edge = if on { ACCENT_DARK } else { BORDER_STRONG };
-    painter.circle_filled(center + egui::vec2(0.0, -14.0 * scale), 41.0 * scale, fill);
-    painter.circle_stroke(
-        center + egui::vec2(0.0, -14.0 * scale),
-        41.0 * scale,
-        Stroke::new(1.0, edge),
+    let breathe = 1.0 + pulse * 0.012;
+    let glass = center + egui::vec2(0.0, -14.0 * scale);
+    painter.circle_filled(glass, 41.0 * scale * breathe, fill);
+    painter.circle_stroke(glass, 41.0 * scale * breathe, Stroke::new(1.0, edge));
+    painter.circle_filled(
+        glass + egui::vec2(-13.0, -15.0) * scale,
+        8.0 * scale,
+        Color32::from_white_alpha(if on { 70 } else { 45 }),
     );
     painter.rect_filled(
         egui::Rect::from_center_size(
@@ -1864,8 +2315,10 @@ fn paint_bulb(
         );
     }
     if on {
+        let spin = if animate { time as f32 * 0.25 } else { 0.0 };
+        let length = 58.0 + pulse * 4.0;
         for ray in 0..8 {
-            let angle = std::f32::consts::TAU * ray as f32 / 8.0;
+            let angle = std::f32::consts::TAU * ray as f32 / 8.0 + spin;
             let start = center
                 + egui::vec2(
                     angle.cos() * 49.0 * scale,
@@ -1873,8 +2326,8 @@ fn paint_bulb(
                 );
             let end = center
                 + egui::vec2(
-                    angle.cos() * 58.0 * scale,
-                    angle.sin() * 58.0 * scale - 14.0 * scale,
+                    angle.cos() * length * scale,
+                    angle.sin() * length * scale - 14.0 * scale,
                 );
             painter.line_segment([start, end], Stroke::new(1.5 * scale, glow));
         }
@@ -1886,6 +2339,96 @@ fn paint_bulb(
         egui::FontId::proportional(10.0),
         MUTED,
     );
+}
+
+fn scene_card(
+    ui: &mut egui::Ui,
+    name: &str,
+    color: Color32,
+    active: bool,
+    width: f32,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 50.0), Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let fill = if active {
+        mix(color, ACCENT_PALE, 0.78)
+    } else if response.hovered() {
+        mix(color, SURFACE, 0.9)
+    } else {
+        SURFACE_SOFT
+    };
+    let stroke = if active {
+        Stroke::new(1.5, color)
+    } else if response.hovered() {
+        Stroke::new(1.0, BORDER_STRONG)
+    } else {
+        Stroke::new(1.0, BORDER)
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(10), fill);
+    painter.rect_stroke(rect, CornerRadius::same(10), stroke, StrokeKind::Inside);
+    painter.circle_filled(egui::pos2(rect.left() + 18.0, rect.center().y), 5.0, color);
+    painter.text(
+        egui::pos2(rect.left() + 32.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        name,
+        FontId::proportional(13.0),
+        INK,
+    );
+    if active {
+        painter.text(
+            egui::pos2(rect.right() - 12.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            "ACTIVA",
+            FontId::proportional(9.0),
+            color,
+        );
+    }
+    response
+}
+
+fn scene_color(scene_id: u16) -> Color32 {
+    match scene_id {
+        PREFERRED_SCENE => rgb(232, 172, 52),
+        11 => rgb(232, 156, 74),
+        13 => rgb(116, 166, 204),
+        15 => rgb(82, 156, 130),
+        16 => rgb(140, 118, 198),
+        14 => rgb(74, 92, 168),
+        1 => rgb(52, 138, 189),
+        2 => rgb(224, 96, 132),
+        3 => rgb(240, 133, 69),
+        4 => rgb(198, 84, 206),
+        5 => rgb(214, 105, 48),
+        6 => rgb(196, 148, 96),
+        7 => rgb(72, 150, 91),
+        8 => rgb(210, 156, 196),
+        9 => rgb(243, 188, 92),
+        10 => rgb(70, 82, 140),
+        17 => rgb(96, 165, 196),
+        18 => rgb(104, 118, 168),
+        19 => rgb(98, 168, 108),
+        20 => rgb(150, 196, 90),
+        21 => rgb(240, 178, 56),
+        22 => rgb(196, 120, 60),
+        23 => rgb(42, 108, 160),
+        24 => rgb(48, 140, 96),
+        25 => rgb(120, 200, 140),
+        26 => rgb(170, 70, 200),
+        27 => rgb(200, 60, 70),
+        28 => rgb(240, 130, 40),
+        _ => MUTED,
+    }
+}
+
+fn mix(from: Color32, to: Color32, amount: f32) -> Color32 {
+    let amount = amount.clamp(0.0, 1.0);
+    let channel = |a: u8, b: u8| (a as f32 * (1.0 - amount) + b as f32 * amount).round() as u8;
+    Color32::from_rgb(
+        channel(from.r(), to.r()),
+        channel(from.g(), to.g()),
+        channel(from.b(), to.b()),
+    )
 }
 
 fn scene_name(scene_id: Option<u16>) -> &'static str {
@@ -2003,14 +2546,41 @@ fn pilot_status(pilot: Pilot) -> String {
         return "Apagada".to_string();
     }
     let scene = scene_name(pilot.scene_id);
-    if scene != "Modo actual" {
+    let base = if scene != "Modo actual" {
         scene.to_string()
     } else {
         pilot
             .temp
             .map(|temperature| format!("{temperature} K"))
             .unwrap_or_else(|| "Encendida".to_string())
+    };
+    pilot
+        .dimming
+        .filter(|dimming| *dimming < 100)
+        .map(|dimming| format!("{base} · {dimming} %"))
+        .unwrap_or(base)
+}
+
+fn cloud_error_hint(error: &str) -> Option<&'static str> {
+    let error = error.to_lowercase();
+    if error.contains("redirect_uri_mismatch") {
+        Some("Google rechazó la URL de retorno: crea el cliente OAuth como «App de escritorio».")
+    } else if error.contains("invalid_client") || error.contains("unauthorized_client") {
+        Some("Revisa el Client ID y el secreto: no coinciden o el cliente no es de tipo Desktop.")
+    } else if error.contains("access_denied") {
+        Some("Agrega tu cuenta de Google como usuario de prueba en la pantalla de consentimiento.")
+    } else if error.contains("faltan las credenciales") {
+        Some("Guarda primero las credenciales de OAuth en esta misma pantalla.")
+    } else {
+        None
     }
+}
+
+fn short_mac(mac: &str) -> String {
+    let mac = normalize_mac(mac);
+    mac.get(mac.len().saturating_sub(4)..)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn selected_device_name(devices: &[ExportDevice], mac: &str) -> String {
@@ -2333,10 +2903,7 @@ fn build_connections(
 }
 
 fn build_local_config(preferences: &Preferences) -> Result<Option<LightConfig>, String> {
-    if preferences.local_export.trim().is_empty()
-        || preferences.local_ip.trim().is_empty()
-        || preferences.local_mac.trim().is_empty()
-    {
+    if preferences.local_ip.trim().is_empty() || preferences.local_mac.trim().is_empty() {
         return Ok(None);
     }
     let ip = preferences
@@ -2344,22 +2911,33 @@ fn build_local_config(preferences: &Preferences) -> Result<Option<LightConfig>, 
         .trim()
         .parse::<Ipv4Addr>()
         .map_err(|_| "Escribe una dirección IPv4 local válida para el foco.".to_string())?;
-    let bytes = fs::read(&preferences.local_export)
-        .map_err(|_| "No pude abrir el export WiZ seleccionado.".to_string())?;
-    let home: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| "El export WiZ seleccionado no es JSON válido.".to_string())?;
     let mac = normalize_mac(&preferences.local_mac);
-    let device = parse_export_devices(&home)?
-        .into_iter()
-        .find(|device| device.mac == mac)
-        .ok_or_else(|| "El foco seleccionado no aparece en el export WiZ.".to_string())?;
-    let key = find_signing_key(&home)
-        .ok_or_else(|| "El export WiZ no contiene la clave de control local.".to_string())?;
+    if mac.len() != 12 || !mac.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Err("La MAC del foco debe tener 12 caracteres hexadecimales.".to_string());
+    }
+    // Sin export la clave queda vacía y los comandos se envían sin firma.
+    let mut key = Vec::new();
+    let mut white_range = None;
+    if !preferences.local_export.trim().is_empty() {
+        let bytes = fs::read(&preferences.local_export)
+            .map_err(|_| "No pude abrir el export WiZ seleccionado.".to_string())?;
+        let home: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| "El export WiZ seleccionado no es JSON válido.".to_string())?;
+        if let Some(device) = parse_export_devices(&home)?
+            .into_iter()
+            .find(|device| device.mac == mac)
+        {
+            white_range = device.white_range;
+            if let Some(signing) = find_signing_key(&home) {
+                key = parse_key(signing)?;
+            }
+        }
+    }
     Ok(Some(LightConfig {
         ip,
-        mac: device.mac,
-        key: parse_key(key)?,
-        white_range: device.white_range,
+        mac,
+        key,
+        white_range,
     }))
 }
 

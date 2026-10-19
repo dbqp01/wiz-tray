@@ -1,7 +1,8 @@
 use std::{
-    net::{Ipv4Addr, SocketAddrV4, UdpSocket},
+    collections::BTreeMap,
+    net::{IpAddr, Ipv4Addr, SocketAddrV4, UdpSocket},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -53,11 +54,46 @@ pub struct CloudOAuthConfig {
     pub wiz_client_secret: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+pub struct DiscoveredLight {
+    pub ip: Ipv4Addr,
+    pub mac: String,
+    pub state: bool,
+    pub dimming: Option<u8>,
+    pub rssi: Option<i8>,
+}
+
+#[derive(Clone, Copy, Default)]
 pub struct Pilot {
     pub state: bool,
     pub scene_id: Option<u16>,
     pub temp: Option<u16>,
+    pub dimming: Option<u8>,
+    pub color: Option<(u8, u8, u8)>,
+    pub rssi: Option<i8>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Expected {
+    state: bool,
+    scene: Option<u16>,
+    temp: Option<u16>,
+    dimming: Option<u8>,
+    color: Option<(u8, u8, u8)>,
+}
+
+impl Pilot {
+    fn matches(self, expected: Expected) -> bool {
+        self.state == expected.state
+            && expected
+                .scene
+                .is_none_or(|scene| self.scene_id == Some(scene))
+            && expected.temp.is_none_or(|temp| self.temp == Some(temp))
+            && expected
+                .dimming
+                .is_none_or(|dimming| self.dimming == Some(dimming))
+            && expected.color.is_none_or(|color| self.color == Some(color))
+    }
 }
 
 #[derive(Clone)]
@@ -68,6 +104,8 @@ pub enum Action {
     Connect,
     Scene(u16),
     Temperature(u16),
+    Brightness(u8),
+    Color(u8, u8, u8),
     Refresh,
     Exit,
 }
@@ -233,7 +271,7 @@ pub fn perform(config: &LightConfig, action: &Action) -> Result<Pilot, String> {
     }
 
     get_pilot(config)?;
-    let (fields, expected_state, expected_scene, expected_temp) =
+    let (fields, expected) =
         command_fields(action).ok_or_else(|| "acción WiZ no reconocida".to_string())?;
     let response = exchange(config, "setPilot", &fields)?;
     if response.get("success") == Some(&Value::Bool(false)) {
@@ -244,13 +282,7 @@ pub fn perform(config: &LightConfig, action: &Action) -> Result<Pilot, String> {
     for _ in 0..5 {
         thread::sleep(Duration::from_millis(400));
         match get_pilot(config) {
-            Ok(pilot)
-                if pilot.state == expected_state
-                    && expected_scene.is_none_or(|scene| pilot.scene_id == Some(scene))
-                    && expected_temp.is_none_or(|temp| pilot.temp == Some(temp)) =>
-            {
-                return Ok(pilot);
-            }
+            Ok(pilot) if pilot.matches(expected) => return Ok(pilot),
             Ok(_) => last_error = "El foco respondió, pero el estado no coincide.".to_string(),
             Err(error) => last_error = error,
         }
@@ -313,20 +345,14 @@ fn perform_cloud_with_token(
         return Err("WiZ Cloud rechazó el comando.".to_string());
     }
 
-    let (expected_state, expected_scene, expected_temp) =
+    let expected =
         cloud_expected_state(action).ok_or_else(|| "acción WiZ no reconocida".to_string())?;
     let mut last_error = "El foco no confirmó el cambio en WiZ Cloud.".to_string();
     // Cloud can briefly return stale state after a scene change, so read it back until it matches.
     for _ in 0..5 {
         thread::sleep(Duration::from_millis(400));
         match get_pilot() {
-            Ok(pilot)
-                if pilot.state == expected_state
-                    && expected_scene.is_none_or(|scene| pilot.scene_id == Some(scene))
-                    && expected_temp.is_none_or(|temperature| pilot.temp == Some(temperature)) =>
-            {
-                return Ok(pilot);
-            }
+            Ok(pilot) if pilot.matches(expected) => return Ok(pilot),
             Ok(_) => last_error = "WiZ Cloud respondió, pero el estado no coincide.".to_string(),
             Err(error) => last_error = error,
         }
@@ -425,7 +451,32 @@ fn cloud_get_pilot(
         state,
         scene_id,
         temp,
+        dimming: optional_u8(pilot, "dimming"),
+        color: optional_rgb(pilot),
+        rssi: optional_rssi(pilot),
     })
+}
+
+fn optional_u8(value: &Value, field: &str) -> Option<u8> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .and_then(|number| u8::try_from(number).ok())
+}
+
+fn optional_rgb(value: &Value) -> Option<(u8, u8, u8)> {
+    Some((
+        optional_u8(value, "r")?,
+        optional_u8(value, "g")?,
+        optional_u8(value, "b")?,
+    ))
+}
+
+fn optional_rssi(value: &Value) -> Option<i8> {
+    value
+        .get("rssi")
+        .and_then(Value::as_i64)
+        .and_then(|rssi| i8::try_from(rssi).ok())
 }
 
 fn cloud_request(
@@ -521,6 +572,16 @@ fn cloud_command_body(action: &Action) -> Result<Value, String> {
             body["state"] = json!(true);
             body["temperature"] = json!(temperature);
         }
+        Action::Brightness(brightness) => {
+            body["state"] = json!(true);
+            body["dimming"] = json!(brightness);
+        }
+        Action::Color(red, green, blue) => {
+            body["state"] = json!(true);
+            body["r"] = json!(red);
+            body["g"] = json!(green);
+            body["b"] = json!(blue);
+        }
         Action::Connect | Action::Refresh | Action::Exit => {
             return Err("acción no válida".to_string());
         }
@@ -528,40 +589,91 @@ fn cloud_command_body(action: &Action) -> Result<Value, String> {
     Ok(body)
 }
 
-fn cloud_expected_state(action: &Action) -> Option<(bool, Option<u16>, Option<u16>)> {
+fn cloud_expected_state(action: &Action) -> Option<Expected> {
     match action {
-        Action::Daylight => Some((true, Some(PREFERRED_SCENE), None)),
-        Action::On => Some((true, None, None)),
-        Action::Off => Some((false, None, None)),
-        Action::Scene(scene) => Some((true, Some(*scene), None)),
-        Action::Temperature(temperature) => Some((true, None, Some(*temperature))),
+        Action::Daylight => Some(Expected {
+            state: true,
+            scene: Some(PREFERRED_SCENE),
+            ..Expected::default()
+        }),
+        Action::On => Some(Expected {
+            state: true,
+            ..Expected::default()
+        }),
+        Action::Off => Some(Expected::default()),
+        Action::Scene(scene) => Some(Expected {
+            state: true,
+            scene: Some(*scene),
+            ..Expected::default()
+        }),
+        Action::Temperature(temperature) => Some(Expected {
+            state: true,
+            temp: Some(*temperature),
+            ..Expected::default()
+        }),
+        // La API Cloud no siempre devuelve dimming/rgb; confirma al menos el encendido.
+        Action::Brightness(_) | Action::Color(..) => Some(Expected {
+            state: true,
+            ..Expected::default()
+        }),
         Action::Connect | Action::Refresh | Action::Exit => None,
     }
 }
 
-fn command_fields(
-    action: &Action,
-) -> Option<(Vec<(&'static str, Value)>, bool, Option<u16>, Option<u16>)> {
+fn command_fields(action: &Action) -> Option<(Vec<(&'static str, Value)>, Expected)> {
     match action {
         Action::Daylight => Some((
             vec![("state", json!(true)), ("sceneId", json!(PREFERRED_SCENE))],
-            true,
-            Some(PREFERRED_SCENE),
-            None,
+            Expected {
+                state: true,
+                scene: Some(PREFERRED_SCENE),
+                ..Expected::default()
+            },
         )),
-        Action::On => Some((vec![("state", json!(true))], true, None, None)),
-        Action::Off => Some((vec![("state", json!(false))], false, None, None)),
+        Action::On => Some((
+            vec![("state", json!(true))],
+            Expected {
+                state: true,
+                ..Expected::default()
+            },
+        )),
+        Action::Off => Some((vec![("state", json!(false))], Expected::default())),
         Action::Scene(scene) => Some((
             vec![("state", json!(true)), ("sceneId", json!(scene))],
-            true,
-            Some(*scene),
-            None,
+            Expected {
+                state: true,
+                scene: Some(*scene),
+                ..Expected::default()
+            },
         )),
         Action::Temperature(temperature) => Some((
             vec![("state", json!(true)), ("temp", json!(temperature))],
-            true,
-            None,
-            Some(*temperature),
+            Expected {
+                state: true,
+                temp: Some(*temperature),
+                ..Expected::default()
+            },
+        )),
+        Action::Brightness(brightness) => Some((
+            vec![("state", json!(true)), ("dimming", json!(brightness))],
+            Expected {
+                state: true,
+                dimming: Some(*brightness),
+                ..Expected::default()
+            },
+        )),
+        Action::Color(red, green, blue) => Some((
+            vec![
+                ("state", json!(true)),
+                ("r", json!(red)),
+                ("g", json!(green)),
+                ("b", json!(blue)),
+            ],
+            Expected {
+                state: true,
+                color: Some((*red, *green, *blue)),
+                ..Expected::default()
+            },
         )),
         Action::Connect | Action::Refresh | Action::Exit => None,
     }
@@ -591,6 +703,9 @@ fn get_pilot(config: &LightConfig) -> Result<Pilot, String> {
         state,
         scene_id,
         temp,
+        dimming: optional_u8(&result, "dimming"),
+        color: optional_rgb(&result),
+        rssi: optional_rssi(&result),
     })
 }
 
@@ -603,7 +718,7 @@ fn verify_device_mac(expected: &str, observed: &str) -> Result<(), String> {
 }
 
 fn exchange(config: &LightConfig, method: &str, fields: &[(&str, Value)]) -> Result<Value, String> {
-    let payload = signed_request(method, fields, &config.key)?;
+    let payload = request_payload(method, fields, &config.key)?;
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
         .map_err(|error| format!("No pude abrir el control local: {error}"))?;
     socket
@@ -628,6 +743,101 @@ fn exchange(config: &LightConfig, method: &str, fields: &[(&str, Value)]) -> Res
         .get("result")
         .cloned()
         .ok_or_else(|| "WiZ devolvió una respuesta incompleta.".to_string())
+}
+
+/// Escanea la /24 local con `getPilot` sin firma. Algunos firmwares exigen HMAC y no responderán.
+pub fn discover_lights() -> Result<Vec<DiscoveredLight>, String> {
+    let local_ip = local_ipv4()?;
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .map_err(|error| format!("No pude abrir el descubrimiento local: {error}"))?;
+    socket
+        .set_nonblocking(true)
+        .map_err(|error| error.to_string())?;
+    let payload = unsigned_request("getPilot", &[])?;
+    let base = u32::from(local_ip) & 0xFFFF_FF00;
+    for host in 1..=254_u32 {
+        let ip = Ipv4Addr::from(base | host);
+        let _ = socket.send_to(payload.as_bytes(), SocketAddrV4::new(ip, DEVICE_PORT));
+    }
+    let deadline = Instant::now() + Duration::from_millis(1800);
+    let mut buffer = [0_u8; 4096];
+    let mut lights: BTreeMap<String, DiscoveredLight> = BTreeMap::new();
+    while Instant::now() < deadline {
+        match socket.recv_from(&mut buffer) {
+            Ok((length, address)) => {
+                if let Some(light) = parse_discovered(address.ip(), &buffer[..length]) {
+                    lights.entry(light.mac.clone()).or_insert(light);
+                }
+            }
+            // Windows convierte los ICMP de hosts ausentes en ConnectionReset.
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    let mut lights: Vec<_> = lights.into_values().collect();
+    lights.sort_by_key(|light| u32::from(light.ip));
+    Ok(lights)
+}
+
+fn local_ipv4() -> Result<Ipv4Addr, String> {
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .map_err(|error| format!("No pude leer la red local: {error}"))?;
+    // connect no envía paquetes: solo hace que Windows elija la interfaz y su IP.
+    socket
+        .connect((Ipv4Addr::new(8, 8, 8, 8), 80))
+        .map_err(|error| format!("No pude leer la red local: {error}"))?;
+    match socket
+        .local_addr()
+        .map_err(|error| format!("No pude leer la red local: {error}"))?
+        .ip()
+    {
+        IpAddr::V4(ip) => Ok(ip),
+        IpAddr::V6(_) => Err("La red local no tiene una dirección IPv4.".to_string()),
+    }
+}
+
+fn parse_discovered(ip: IpAddr, bytes: &[u8]) -> Option<DiscoveredLight> {
+    let IpAddr::V4(ip) = ip else { return None };
+    let response: Value = serde_json::from_slice(bytes).ok()?;
+    if response.get("method").and_then(Value::as_str) != Some("getPilot") {
+        return None;
+    }
+    let result = response.get("result")?;
+    Some(DiscoveredLight {
+        ip,
+        mac: normalize_mac(result.get("mac")?.as_str()?),
+        state: result.get("state")?.as_bool()?,
+        dimming: optional_u8(result, "dimming"),
+        rssi: optional_rssi(result),
+    })
+}
+
+fn request_payload(method: &str, fields: &[(&str, Value)], key: &[u8]) -> Result<String, String> {
+    if key.is_empty() {
+        unsigned_request(method, fields)
+    } else {
+        signed_request(method, fields, key)
+    }
+}
+
+fn unsigned_request(method: &str, fields: &[(&str, Value)]) -> Result<String, String> {
+    let mut params = String::from("{");
+    for (index, (name, value)) in fields.iter().enumerate() {
+        if index != 0 {
+            params.push(',');
+        }
+        params.push_str(&serde_json::to_string(name).map_err(|error| error.to_string())?);
+        params.push(':');
+        params.push_str(&serde_json::to_string(value).map_err(|error| error.to_string())?);
+    }
+    params.push('}');
+    Ok(format!(
+        "{{\"method\":{},\"params\":{}}}",
+        serde_json::to_string(method).map_err(|error| error.to_string())?,
+        params
+    ))
 }
 
 fn signed_request(method: &str, fields: &[(&str, Value)], key: &[u8]) -> Result<String, String> {
@@ -676,20 +886,54 @@ mod tests {
 
     #[test]
     fn preferred_action_turns_on_in_daylight() {
-        let (fields, state, scene, temp) = command_fields(&Action::Daylight).unwrap();
+        let (fields, expected) = command_fields(&Action::Daylight).unwrap();
         assert_eq!(fields, [("state", json!(true)), ("sceneId", json!(12))]);
-        assert!(state);
-        assert_eq!(scene, Some(12));
-        assert_eq!(temp, None);
+        assert!(expected.state);
+        assert_eq!(expected.scene, Some(12));
+        assert_eq!(expected.temp, None);
     }
 
     #[test]
     fn temperature_action_turns_on_and_verifies_the_selected_temperature() {
-        let (fields, state, scene, temp) = command_fields(&Action::Temperature(4000)).unwrap();
+        let (fields, expected) = command_fields(&Action::Temperature(4000)).unwrap();
         assert_eq!(fields, [("state", json!(true)), ("temp", json!(4000))]);
-        assert!(state);
-        assert_eq!(scene, None);
-        assert_eq!(temp, Some(4000));
+        assert!(expected.state);
+        assert_eq!(expected.scene, None);
+        assert_eq!(expected.temp, Some(4000));
+    }
+
+    #[test]
+    fn brightness_and_color_actions_verify_their_readback() {
+        let (fields, expected) = command_fields(&Action::Brightness(40)).unwrap();
+        assert_eq!(fields, [("state", json!(true)), ("dimming", json!(40))]);
+        assert!(
+            Pilot {
+                state: true,
+                dimming: Some(40),
+                ..Pilot::default()
+            }
+            .matches(expected)
+        );
+        assert!(!Pilot::default().matches(expected));
+
+        let (fields, expected) = command_fields(&Action::Color(255, 0, 32)).unwrap();
+        assert_eq!(
+            fields,
+            [
+                ("state", json!(true)),
+                ("r", json!(255)),
+                ("g", json!(0)),
+                ("b", json!(32))
+            ]
+        );
+        assert!(
+            Pilot {
+                state: true,
+                color: Some((255, 0, 32)),
+                ..Pilot::default()
+            }
+            .matches(expected)
+        );
     }
 
     #[test]
@@ -727,6 +971,36 @@ mod tests {
         assert_eq!(devices[1].device_id, None);
         assert_eq!(devices[1].home_id, Some(456));
         assert!(parse_export_devices(&json!({"devices": [{"mac_address": "invalid"}]})).is_err());
+    }
+
+    #[test]
+    fn unsigned_requests_are_plain_json_without_hmac() {
+        assert_eq!(
+            unsigned_request("getPilot", &[]).unwrap(),
+            r#"{"method":"getPilot","params":{}}"#
+        );
+        assert_eq!(
+            request_payload("setPilot", &[("state", json!(true))], &[]).unwrap(),
+            r#"{"method":"setPilot","params":{"state":true}}"#
+        );
+    }
+
+    #[test]
+    fn discovery_ignores_other_packets_and_keeps_the_mac() {
+        let response = br#"{"method":"getPilot","env":"pro","result":{"mac":"AA:BB:CC:DD:EE:FF","state":true,"dimming":40,"rssi":-61}}"#;
+        let light = parse_discovered("192.168.31.19".parse().unwrap(), response).unwrap();
+        assert_eq!(light.mac, "aabbccddeeff");
+        assert!(light.state);
+        assert_eq!(light.dimming, Some(40));
+        assert_eq!(light.rssi, Some(-61));
+        assert!(
+            parse_discovered(
+                "192.168.31.19".parse().unwrap(),
+                br#"{"method":"firstBeat"}"#
+            )
+            .is_none()
+        );
+        assert!(parse_discovered("192.168.31.19".parse().unwrap(), b"not json").is_none());
     }
 
     #[test]
@@ -829,9 +1103,16 @@ mod tests {
             cloud_command_body(&Action::Temperature(4000)).unwrap(),
             json!({"state": true, "temperature": 4000})
         );
+        let expected = cloud_expected_state(&Action::Temperature(4000)).unwrap();
+        assert!(expected.state);
+        assert_eq!(expected.temp, Some(4000));
         assert_eq!(
-            cloud_expected_state(&Action::Temperature(4000)),
-            Some((true, None, Some(4000)))
+            cloud_command_body(&Action::Brightness(40)).unwrap(),
+            json!({"state": true, "dimming": 40})
+        );
+        assert_eq!(
+            cloud_command_body(&Action::Color(255, 0, 32)).unwrap(),
+            json!({"state": true, "r": 255, "g": 0, "b": 32})
         );
     }
 

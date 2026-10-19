@@ -22,8 +22,8 @@ En el primer inicio, abre **Conexiones** y configura uno o ambos modos. Los dato
 Control local es la opción recomendada si usas la app en casa.
 
 1. En la app WiZ, activa **Ajustes > Seguridad > comunicación local**.
-2. Abre **WiZ Tray > Conexiones > Local** y elige **Integraciones > Integraciones locales > Obtener enlace** exportado por la app WiZ.
-3. Selecciona el foco del export, escribe su IP local y un nombre, y pulsa **Guardar y probar**.
+2. Abre **WiZ Tray > Conexiones > Local** y pulsa **Buscar focos en mi red**. La app escanea la subred `/24` por UDP 38899 y muestra IP + MAC; **Usar y conectar** guarda la conexión al instante. También puedes escribir IP y MAC a mano.
+3. El **token es opcional**: si importas el export `wiz-home.json`, la app firma los comandos con HMAC; si no, envía JSON sin firma. Muchos firmwares domésticos aceptan comandos sin firma (verificado en un foco real); otros más nuevos los rechazan y entonces hace falta el export.
 4. Confirma que el computador y el foco estén en la misma red Wi-Fi.
 
 El export `wiz-home.json` contiene una clave privada de control. WiZ Tray solo guarda su ruta: lee la clave localmente cuando arranca. No pegues ni subas ese archivo. Puedes guardarlo fuera de la carpeta del repositorio.
@@ -44,7 +44,8 @@ WiZ publica una API documentada para instalaciones Pro: <https://docs.pro.wizcon
 
 ## Uso
 
-- **Control**: estado confirmado, encender con Luz de día, apagar, temperatura y escenas. La vista inicial muestra seis favoritas; **Ver todas** incluye Fiesta, Halloween y otras 22 escenas. Algunos modos dependen del modelo de foco.
+- **Control**: estado confirmado, encender con Luz de día, apagar, temperatura, brillo con presets, 8 colores con selector personalizado y escenas. La vista inicial muestra seis favoritas; **Ver todas** incluye Fiesta, Halloween y otras 22 escenas. Algunos modos dependen del modelo de foco.
+- **Animaciones**: el foco del panel respira, gira sus rayos y emite chispas cuando está encendido, con transición suave de color; se desactivan si Windows tiene las animaciones desactivadas.
 - **Rutinas**: apaga el foco tras un intervalo o guarda una acción diaria para apagarlo o encender Luz de día a una hora local. La rutina diaria funciona mientras WiZ Tray permanezca abierta en la bandeja; Cloud necesita una sesión activa.
 - **Bandeja**: abre el panel o cambia rápidamente encendido, escenas y temperaturas.
 - **Local y Cloud**: guarda ambos modos y cambia entre ellos desde el encabezado del panel.
