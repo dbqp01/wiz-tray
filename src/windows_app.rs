@@ -68,19 +68,19 @@ const SCENES: &[(u16, &str)] = &[
 
 const FAVORITE_SCENES: &[u16] = &[PREFERRED_SCENE, 11, 13, 15, 16, 14];
 
-const CANVAS: Color32 = Color32::from_rgb(248, 247, 242);
-const SIDEBAR: Color32 = Color32::from_rgb(250, 248, 243);
-const SURFACE: Color32 = Color32::from_rgb(255, 253, 248);
-const SURFACE_SOFT: Color32 = Color32::from_rgb(247, 244, 235);
-const BORDER: Color32 = Color32::from_rgb(226, 220, 208);
-const BORDER_STRONG: Color32 = Color32::from_rgb(211, 198, 174);
-const INK: Color32 = Color32::from_rgb(27, 57, 47);
-const MUTED: Color32 = Color32::from_rgb(99, 111, 104);
-const ACCENT: Color32 = Color32::from_rgb(236, 177, 64);
-const ACCENT_DARK: Color32 = Color32::from_rgb(151, 93, 14);
-const ACCENT_PALE: Color32 = Color32::from_rgb(255, 242, 213);
-const SUCCESS: Color32 = Color32::from_rgb(51, 118, 82);
-const ERROR: Color32 = Color32::from_rgb(164, 72, 57);
+const CANVAS: Color32 = Color32::from_rgb(13, 13, 15);
+const SURFACE: Color32 = Color32::from_rgb(24, 24, 28);
+const SURFACE_SOFT: Color32 = Color32::from_rgb(37, 37, 43);
+const BORDER: Color32 = Color32::from_rgb(44, 44, 52);
+const BORDER_STRONG: Color32 = Color32::from_rgb(74, 74, 86);
+const INK: Color32 = Color32::from_rgb(246, 246, 249);
+const MUTED: Color32 = Color32::from_rgb(148, 148, 160);
+const ACCENT: Color32 = INK;
+const ACCENT_DARK: Color32 = Color32::from_rgb(240, 178, 96);
+const ACCENT_PALE: Color32 = SURFACE_SOFT;
+const ON_ACCENT: Color32 = Color32::from_rgb(12, 12, 14);
+const SUCCESS: Color32 = Color32::from_rgb(116, 214, 164);
+const ERROR: Color32 = Color32::from_rgb(240, 138, 120);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Backend {
@@ -106,8 +106,8 @@ impl Backend {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Local => "Casa · Wi-Fi local",
-            Self::Cloud => "WiZ Cloud · remoto",
+            Self::Local => "Casa por Wi-Fi",
+            Self::Cloud => "WiZ Cloud remoto",
         }
     }
 }
@@ -149,7 +149,7 @@ impl RoutineAction {
         match self {
             Self::Off => "Apagar",
             Self::On => "Encender",
-            Self::Daylight => "Encender · Luz de día",
+            Self::Daylight => "Encender con Luz de día",
         }
     }
 }
@@ -277,11 +277,12 @@ struct App {
     cloud_maximum: String,
     page: Page,
     setup_tab: Backend,
+    cloud_setup_step: usize,
+    cloud_discovery_started: bool,
     pilot: Option<Pilot>,
     temperature: u16,
     brightness: u8,
     color: [u8; 3],
-    visual_color: [f32; 3],
     discovered: Vec<DiscoveredLight>,
     discovery_running: bool,
     timer_minutes: u16,
@@ -378,12 +379,16 @@ impl App {
             .unwrap_or_default();
         let routine_draft = preferences.daily_routine.clone();
         let mut app = Self {
-            page: if connections.has(preferences.backend) {
-                Page::Home
-            } else {
-                Page::Connections
+            page: {
+                if connections.has(preferences.backend) {
+                    Page::Home
+                } else {
+                    Page::Connections
+                }
             },
             setup_tab: preferences.backend,
+            cloud_setup_step: 0,
+            cloud_discovery_started: false,
             preferences: preferences.clone(),
             draft: preferences,
             connections,
@@ -400,7 +405,6 @@ impl App {
             temperature: 4000,
             brightness: 100,
             color: [255, 214, 140],
-            visual_color: [240.0 / 255.0, 177.0 / 255.0, 79.0 / 255.0],
             discovered: Vec::new(),
             discovery_running: false,
             timer_minutes: 30,
@@ -556,7 +560,7 @@ impl App {
                 self.pilot = Some(pilot);
                 let message = pilot_status(pilot);
                 self.last_error = None;
-                self.set_status(&format!("{} · {message}", self.preferences.device_name));
+                self.set_status(&format!("{}: {message}", self.preferences.device_name));
                 if let Some(temperature) = pilot.temp {
                     self.temperature = temperature;
                 }
@@ -592,7 +596,7 @@ impl App {
             self.last_error = Some(error.clone());
             self.set_status(&error);
         } else {
-            self.set_status(&format!("Conexión activa · {}", backend.label()));
+            self.set_status(&format!("Conexión activa: {}", backend.label()));
         }
     }
 
@@ -690,23 +694,6 @@ impl App {
 
     fn tick(&mut self, ctx: &egui::Context) {
         self.handle_events(ctx);
-        let target = self.pilot.and_then(|pilot| {
-            pilot.color.or_else(|| {
-                pilot.temp.map(|temp| {
-                    if temp <= 4350 {
-                        (240, 177, 79)
-                    } else {
-                        (137, 184, 211)
-                    }
-                })
-            })
-        });
-        if let Some((red, green, blue)) = target {
-            let factor = (ctx.input(|input| input.stable_dt).min(0.1) * 6.0).min(1.0);
-            for (channel, value) in self.visual_color.iter_mut().zip([red, green, blue]) {
-                *channel += (value as f32 / 255.0 - *channel) * factor;
-            }
-        }
         if self.initial_refresh_pending {
             self.initial_refresh_pending = false;
             if self.connections.has(self.preferences.backend)
@@ -716,7 +703,7 @@ impl App {
             } else if self.preferences.backend == Backend::Cloud
                 && self.connections.has(Backend::Cloud)
             {
-                self.set_status("WiZ Cloud listo · inicia sesión para leer el foco.");
+                self.set_status("WiZ Cloud listo. Inicia sesión para leer el foco.");
             }
         }
         if self.timer_due.is_some_and(|due| Instant::now() >= due) && !self.command_running {
@@ -785,160 +772,311 @@ impl App {
 
     fn draw(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let area = ui.available_size();
-        let sidebar_width = 196.0_f32.min((area.x * 0.28).max(166.0));
-        ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                Vec2::new(sidebar_width, area.y),
-                Layout::top_down(Align::Min),
-                |ui| self.draw_sidebar(ui),
-            );
-            ui.separator();
-            ui.add_space(8.0);
-            let main_width = ui.available_width().max(1.0);
-            ui.allocate_ui_with_layout(
-                Vec2::new(main_width, area.y),
-                Layout::top_down(Align::Min),
-                |ui| {
-                    egui::Frame::new()
-                        .fill(CANVAS)
-                        .stroke(Stroke::NONE)
-                        .inner_margin(Margin::symmetric(16, 28))
-                        .show(ui, |ui| {
-                            self.draw_header(ui);
-                            ui.add_space(20.0);
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| match self.page {
-                                    Page::Home => self.draw_home(ui, ctx),
-                                    Page::Routines => self.draw_routines(ui, ctx),
-                                    Page::Connections => self.draw_connections(ui, ctx),
-                                });
-                        });
-                },
-            );
-        });
-    }
-
-    fn draw_sidebar(&mut self, ui: &mut egui::Ui) {
+        let compact = area.x < 860.0;
+        let accent = self.accent_color();
         egui::Frame::new()
-            .fill(SIDEBAR)
-            .inner_margin(egui::Margin::symmetric(20, 24))
+            .inner_margin(Margin::symmetric(
+                if compact { 16 } else { 26 },
+                if compact { 14 } else { 18 },
+            ))
             .show(ui, |ui| {
-                ui.label(RichText::new("WiZ").size(31.0).strong().color(INK));
-                ui.label(RichText::new("LUZ, A TU RITMO").size(10.0).color(MUTED));
-                ui.add_space(42.0);
-                ui.label(RichText::new("TU ESPACIO").size(9.0).strong().color(MUTED));
-                ui.add_space(10.0);
-                self.nav_button(ui, Page::Home, "Control");
-                self.nav_button(ui, Page::Routines, "Rutinas");
-                self.nav_button(ui, Page::Connections, "Conexiones");
-                ui.add_space(30.0);
-                ui.separator();
-                ui.add_space(16.0);
-                ui.label(RichText::new("FOCO ACTUAL").size(9.0).strong().color(MUTED));
-                ui.add_space(9.0);
-                let color = if self.pilot.is_some_and(|pilot| pilot.state) {
-                    ACCENT_DARK
-                } else {
-                    MUTED
-                };
-                egui::Frame::new()
-                    .fill(SURFACE)
-                    .stroke(Stroke::new(1.0, BORDER))
-                    .corner_radius(CornerRadius::same(12))
-                    .inner_margin(Margin::same(12))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("●").color(color).size(12.0));
-                            ui.label(
-                                RichText::new(&self.preferences.device_name)
-                                    .size(12.0)
-                                    .strong()
-                                    .color(INK),
-                            );
-                        });
-                        ui.add_space(3.0);
-                        ui.label(
-                            RichText::new(self.preferences.backend.label())
-                                .size(10.0)
-                                .color(MUTED),
-                        );
+                self.draw_topbar(ui, compact);
+                ui.add_space(12.0);
+                self.draw_stage(ui, ctx, compact);
+                ui.add_space(8.0);
+                self.draw_tabs(ui, accent);
+                ui.add_space(14.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| match self.page {
+                        Page::Home => self.draw_home(ui, ctx),
+                        Page::Routines => self.draw_routines(ui, ctx),
+                        Page::Connections => self.draw_connections(ui, ctx),
                     });
             });
     }
 
-    fn nav_button(&mut self, ui: &mut egui::Ui, page: Page, label: &str) {
-        let selected = self.page == page;
-        let color = if selected { ACCENT_PALE } else { SIDEBAR };
-        let label_text =
-            RichText::new(label)
-                .size(13.0)
-                .color(if selected { ACCENT_DARK } else { INK });
-        let label_text = if selected {
-            label_text.strong()
-        } else {
-            label_text
-        };
-        let response = ui.add_sized(
-            [ui.available_width(), 38.0],
-            egui::Button::new(label_text)
-                .fill(color)
-                .corner_radius(CornerRadius::same(8))
-                .stroke(Stroke::NONE),
-        );
-        if response.clicked() {
-            self.page = page;
+    // El acento de la interfaz sigue al color real de la luz encendida.
+    fn accent_color(&self) -> Color32 {
+        match self.pilot.filter(|pilot| pilot.state) {
+            Some(pilot) => mix(preview_light_color(Some(pilot), 0.0, false), INK, 0.18),
+            None => INK,
         }
-        ui.add_space(4.0);
     }
 
-    fn draw_header(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let heading = match self.page {
-                Page::Home => "Panel de luz",
-                Page::Routines => "Rutinas",
-                Page::Connections => "Configurar WiZ",
-            };
-            ui.label(RichText::new(heading).size(29.0).strong().color(INK));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if self.connections.has(Backend::Cloud) {
-                    let mut connect = false;
-                    if self.preferences.backend == Backend::Cloud && !has_cloud_session() {
-                        connect = ui.button("Iniciar sesión").clicked();
+    fn draw_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, compact: bool) {
+        let time = ui.input(|input| input.time) as f32;
+        let on = self.pilot.is_some_and(|pilot| pilot.state);
+        let light = preview_light_color(self.pilot, time, self.animations_enabled);
+        let accent = if on { mix(light, INK, 0.18) } else { INK };
+        let device = self.preferences.device_name.trim().to_owned();
+        let device = if device.is_empty() {
+            "Tu foco".to_owned()
+        } else {
+            device
+        };
+        let (state, subtitle) = match self.pilot {
+            Some(pilot) if pilot.state => (
+                scene_name(pilot.scene_id),
+                "Encendida · el color muestra el estado que envía el foco",
+            ),
+            Some(_) => ("Apagada", "El foco está apagado"),
+            None => ("Sin lectura", "Conecta un foco para ver su color en vivo"),
+        };
+        let radius = if compact { 34.0 } else { 46.0 };
+        let halo = if compact { 16.0 } else { 26.0 };
+        let pulse = if on && self.animations_enabled {
+            0.9 + 0.1 * (time * 1.6).sin()
+        } else {
+            1.0
+        };
+        let brightness =
+            f32::from(self.pilot.and_then(|pilot| pilot.dimming).unwrap_or(100)) / 100.0;
+        let timer = self.timer_fraction();
+
+        egui::Frame::new()
+            .fill(SURFACE)
+            .corner_radius(CornerRadius::same(22))
+            .inner_margin(Margin::symmetric(
+                if compact { 16 } else { 22 },
+                if compact { 14 } else { 16 },
+            ))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let size =
+                        Vec2::new(radius * 2.0 + halo * 2.0, radius * 2.0 + halo * 2.0 + 14.0);
+                    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                    paint_bulb(
+                        ui.painter(),
+                        rect,
+                        radius,
+                        halo,
+                        light,
+                        on,
+                        pulse,
+                        brightness,
+                        timer,
+                    );
+                    ui.add_space(if compact { 12.0 } else { 18.0 });
+                    if compact {
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(device).size(12.5).color(MUTED));
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                status_dot(ui, if on { accent } else { BORDER_STRONG });
+                                ui.label(display(state, 21.0));
+                            });
+                            ui.label(RichText::new(subtitle).size(12.0).color(MUTED));
+                            ui.add_space(10.0);
+                            self.draw_stage_metrics(ui, accent, false);
+                            ui.add_space(10.0);
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                self.draw_stage_actions(ui, ctx, accent, on);
+                            });
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(device).size(12.5).color(MUTED));
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    status_dot(ui, if on { accent } else { BORDER_STRONG });
+                                    ui.label(display(state, 26.0));
+                                });
+                                ui.label(RichText::new(subtitle).size(12.0).color(MUTED));
+                            });
+                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                ui.vertical(|ui| {
+                                    self.draw_stage_metrics(ui, accent, true);
+                                    ui.add_space(14.0);
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        self.draw_stage_actions(ui, ctx, accent, on);
+                                    });
+                                });
+                            });
+                        });
                     }
-                    if connect {
-                        self.start_action(Backend::Cloud, Action::Connect, ui.ctx());
+                    if let Some(due) = self.timer_due {
+                        ui.label(
+                            RichText::new(format!(
+                                "Se apaga en {} min",
+                                due.saturating_duration_since(Instant::now())
+                                    .as_secs()
+                                    .div_ceil(60)
+                            ))
+                            .size(12.0)
+                            .color(MUTED),
+                        );
+                    } else if self.preferences.daily_routine.enabled {
+                        ui.label(
+                            RichText::new("Rutina diaria programada")
+                                .size(12.0)
+                                .color(MUTED),
+                        );
                     }
-                }
-                let mut choose_local = false;
-                let mut choose_cloud = false;
-                if self.connections.has(Backend::Cloud) {
-                    choose_cloud = ui
-                        .selectable_label(self.preferences.backend == Backend::Cloud, "Cloud")
-                        .clicked();
-                }
-                if self.connections.has(Backend::Local) {
-                    choose_local = ui
-                        .selectable_label(self.preferences.backend == Backend::Local, "Casa")
-                        .clicked();
-                }
-                if choose_local {
-                    self.set_backend(Backend::Local);
-                } else if choose_cloud {
-                    self.set_backend(Backend::Cloud);
+                });
+            });
+    }
+
+    fn draw_stage_metrics(&mut self, ui: &mut egui::Ui, accent: Color32, stacked: bool) {
+        let brightness = self
+            .pilot
+            .and_then(|pilot| pilot.dimming)
+            .map(|value| format!("{value} %"))
+            .unwrap_or_else(|| "—".to_string());
+        let temperature = self
+            .pilot
+            .and_then(|pilot| pilot.temp)
+            .map(|value| format!("{value} K"))
+            .unwrap_or_else(|| "—".to_string());
+        let signal = self
+            .pilot
+            .and_then(|pilot| pilot.rssi)
+            .map(|value| format!("{value} dBm"))
+            .unwrap_or_else(|| "—".to_string());
+        let metrics = [
+            ("Brillo", brightness.as_str()),
+            ("Temperatura", temperature.as_str()),
+            ("Señal", signal.as_str()),
+        ];
+        if stacked {
+            let rssi = self.pilot.and_then(|pilot| pilot.rssi);
+            ui.vertical(|ui| {
+                for (label, value) in metrics {
+                    ui.horizontal(|ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if label == "Señal" {
+                                paint_signal(ui, rssi);
+                            } else {
+                                ui.add_space(22.0);
+                            }
+                            ui.label(
+                                RichText::new(value)
+                                    .size(15.0)
+                                    .strong()
+                                    .color(if value == "—" { MUTED } else { accent }),
+                            );
+                            ui.label(RichText::new(label).size(11.5).color(MUTED));
+                        });
+                    });
                 }
             });
-        });
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                for (label, value) in metrics {
+                    hero_stat(ui, label, value, accent);
+                    ui.add_space(22.0);
+                }
+            });
+        }
+    }
+
+    fn draw_stage_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        accent: Color32,
+        on: bool,
+    ) {
+        if ui
+            .add_sized(
+                [104.0, 34.0],
+                egui::Button::new(
+                    RichText::new(if on { "Apagar" } else { "Encender" })
+                        .size(13.0)
+                        .color(ON_ACCENT),
+                )
+                .fill(if on { accent } else { INK })
+                .stroke(Stroke::NONE)
+                .corner_radius(CornerRadius::same(9)),
+            )
+            .clicked()
+        {
+            self.start_action(
+                self.preferences.backend,
+                if on { Action::Off } else { Action::Daylight },
+                ctx,
+            );
+        }
+        if ui
+            .add_sized(
+                [104.0, 34.0],
+                egui::Button::new(RichText::new("Luz de día").size(13.0).color(INK))
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::new(1.0, BORDER_STRONG))
+                    .corner_radius(CornerRadius::same(9)),
+            )
+            .clicked()
+        {
+            self.start_action(self.preferences.backend, Action::Daylight, ctx);
+        }
+    }
+
+    // Fracción restante del apagado programado, para el anillo del foquito.
+    fn timer_fraction(&self) -> Option<f32> {
+        let due = self.timer_due?;
+        let total = f32::from(self.timer_minutes) * 60.0;
+        if total <= 0.0 {
+            return None;
+        }
+        let left = due.saturating_duration_since(Instant::now()).as_secs_f32();
+        Some((left / total).clamp(0.0, 1.0))
+    }
+
+    fn draw_topbar(&mut self, ui: &mut egui::Ui, compact: bool) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&self.status).size(11.0).color(MUTED));
-            if let Some(sync) = self.last_sync {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(format!("Actualizado hace {} s", sync.elapsed().as_secs()))
-                            .size(10.0)
-                            .color(MUTED),
-                    );
-                });
+            ui.label(RichText::new("WiZ Tray").size(15.0).strong().color(INK));
+            if !compact {
+                ui.label(RichText::new("·").size(13.0).color(BORDER_STRONG));
+                ui.label(
+                    RichText::new(self.preferences.backend.label())
+                        .size(12.5)
+                        .color(MUTED),
+                );
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if self.connections.has(Backend::Cloud)
+                    && self.preferences.backend == Backend::Cloud
+                    && !has_cloud_session()
+                    && ui
+                        .add_sized(
+                            [104.0, 30.0],
+                            egui::Button::new(
+                                RichText::new("Iniciar sesión").size(12.5).color(INK),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::new(1.0, BORDER_STRONG))
+                            .corner_radius(CornerRadius::same(8)),
+                        )
+                        .clicked()
+                {
+                    self.start_action(Backend::Cloud, Action::Connect, ui.ctx());
+                }
+                if let Some(chosen) = backend_switch(
+                    ui,
+                    self.preferences.backend,
+                    self.connections.has(Backend::Local),
+                    self.connections.has(Backend::Cloud),
+                ) {
+                    self.set_backend(chosen);
+                }
+                ui.label(RichText::new(&self.status).size(11.5).color(MUTED));
+            });
+        });
+    }
+
+    fn draw_tabs(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        ui.horizontal(|ui| {
+            for (page, label) in [
+                (Page::Home, "Luz y escenas"),
+                (Page::Routines, "Rutinas"),
+                (Page::Connections, "Conexiones"),
+            ] {
+                let selected = self.page == page;
+                if tab_button(ui, label, selected, accent).clicked() {
+                    self.page = page;
+                }
             }
         });
     }
@@ -948,58 +1086,86 @@ impl App {
             self.draw_setup_prompt(ui);
             return;
         }
-        self.draw_hero_card(ui, ctx);
-        ui.add_space(16.0);
-        let available = ui.available_width();
-        if available >= 720.0 {
+        // Dos columnas iguales y un único canal de 14 px cierran el ancho del panel.
+        if ui.available_width() >= 720.0 {
             ui.columns(2, |columns| {
                 self.draw_brightness_card(&mut columns[0], ctx);
+                columns[0].add_space(14.0);
+                self.draw_temperature_card(&mut columns[0], ctx);
                 self.draw_color_card(&mut columns[1], ctx);
+                columns[1].add_space(14.0);
+                self.draw_scenes_card(&mut columns[1], ctx);
             });
         } else {
             self.draw_brightness_card(ui, ctx);
             ui.add_space(14.0);
-            self.draw_color_card(ui, ctx);
-        }
-        ui.add_space(16.0);
-        if available >= 720.0 {
-            ui.columns(2, |columns| {
-                self.draw_temperature_card(&mut columns[0], ctx);
-                self.draw_scenes_card(&mut columns[1], ctx);
-            });
-        } else {
             self.draw_temperature_card(ui, ctx);
+            ui.add_space(14.0);
+            self.draw_color_card(ui, ctx);
             ui.add_space(14.0);
             self.draw_scenes_card(ui, ctx);
         }
     }
 
     fn draw_brightness_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let accent = self.accent_color();
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Brillo").size(19.0).strong());
+                ui.label(display("Brillo", 15.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!("{} %", self.brightness))
-                            .size(23.0)
-                            .strong()
-                            .color(ACCENT_DARK),
+                            .font(display_font(24.0))
+                            .color(accent),
                     );
                 });
             });
             ui.label(
                 RichText::new("Intensidad de la luz")
-                    .size(11.0)
+                    .size(12.0)
                     .color(MUTED),
             );
-            ui.add_space(14.0);
+            ui.add_space(18.0);
             ui.spacing_mut().slider_width = ui.available_width();
-            ui.add(egui::Slider::new(&mut self.brightness, 1..=100).show_value(false));
-            ui.add_space(10.0);
+            let response = ui
+                .scope(|ui| {
+                    ui.visuals_mut().selection.bg_fill = accent;
+                    ui.add(
+                        egui::Slider::new(&mut self.brightness, 1..=100)
+                            .suffix(" %")
+                            .show_value(false)
+                            .trailing_fill(true)
+                            .handle_shape(egui::style::HandleShape::Circle),
+                    )
+                })
+                .inner;
+            if response.drag_stopped() || (response.changed() && !response.dragged()) {
+                self.start_action(
+                    self.preferences.backend,
+                    Action::Brightness(self.brightness),
+                    ctx,
+                );
+            }
+            ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
                 for preset in [25, 50, 75, 100] {
+                    let selected = self.brightness == preset;
                     if ui
-                        .selectable_label(self.brightness == preset, format!("{preset} %"))
+                        .add_sized(
+                            [56.0, 28.0],
+                            egui::Button::new(
+                                RichText::new(format!("{preset} %"))
+                                    .size(12.0)
+                                    .color(if selected { ON_ACCENT } else { MUTED }),
+                            )
+                            .fill(if selected {
+                                accent
+                            } else {
+                                Color32::TRANSPARENT
+                            })
+                            .corner_radius(CornerRadius::same(8))
+                            .stroke(Stroke::new(1.0, if selected { accent } else { BORDER })),
+                        )
                         .clicked()
                     {
                         self.brightness = preset;
@@ -1011,23 +1177,6 @@ impl App {
                     }
                 }
             });
-            ui.add_space(8.0);
-            if ui
-                .add_sized(
-                    [ui.available_width(), 40.0],
-                    egui::Button::new(RichText::new("Aplicar brillo").strong().color(INK))
-                        .fill(ACCENT)
-                        .corner_radius(CornerRadius::same(8))
-                        .stroke(Stroke::NONE),
-                )
-                .clicked()
-            {
-                self.start_action(
-                    self.preferences.backend,
-                    Action::Brightness(self.brightness),
-                    ctx,
-                );
-            }
         });
     }
 
@@ -1044,31 +1193,31 @@ impl App {
         ];
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Color").size(19.0).strong());
+                ui.label(display("Color", 15.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!(
                             "#{:02X}{:02X}{:02X}",
                             self.color[0], self.color[1], self.color[2]
                         ))
-                        .size(11.0)
+                        .size(12.0)
                         .color(MUTED),
                     );
                 });
             });
             ui.label(
                 RichText::new("Ambiente para focos de color")
-                    .size(11.0)
+                    .size(12.0)
                     .color(MUTED),
             );
-            ui.add_space(12.0);
+            ui.add_space(14.0);
             let active_color = self.pilot.and_then(|pilot| pilot.color);
             ui.horizontal_wrapped(|ui| {
                 for (red, green, blue, name) in PRESETS {
                     let color = Color32::from_rgb(*red, *green, *blue);
                     let active = active_color == Some((*red, *green, *blue));
                     let (rect, response) =
-                        ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+                        ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
                     let response = response
                         .on_hover_text(*name)
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -1080,30 +1229,45 @@ impl App {
                             ctx,
                         );
                     }
+                    let hover =
+                        ui.ctx()
+                            .animate_bool_with_time(response.id, response.hovered(), 0.12);
                     let painter = ui.painter();
-                    painter.rect_filled(rect.shrink(2.0), CornerRadius::same(9), color);
+                    if active || hover > 0.0 {
+                        painter.rect_filled(
+                            rect.expand(1.0 + hover * 2.0),
+                            CornerRadius::same(13),
+                            rgba(color, if active { 46 } else { 22 }),
+                        );
+                    }
+                    painter.rect_filled(
+                        rect.shrink(2.0 - hover * 2.0),
+                        CornerRadius::same(11),
+                        color,
+                    );
                     if active {
                         painter.rect_stroke(
-                            rect.shrink(1.0),
-                            CornerRadius::same(10),
+                            rect.shrink(0.5),
+                            CornerRadius::same(12),
                             Stroke::new(2.0, INK),
-                            StrokeKind::Inside,
-                        );
-                    } else if response.hovered() {
-                        painter.rect_stroke(
-                            rect.shrink(1.0),
-                            CornerRadius::same(10),
-                            Stroke::new(1.0, BORDER_STRONG),
                             StrokeKind::Inside,
                         );
                     }
                 }
             });
-            ui.add_space(12.0);
+            ui.add_space(14.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Personalizado").size(12.0).color(MUTED));
                 ui.color_edit_button_srgb(&mut self.color);
-                if ui.button("Aplicar color").clicked() {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Aplicar").size(12.0).color(INK))
+                            .fill(Color32::TRANSPARENT)
+                            .corner_radius(CornerRadius::same(8))
+                            .stroke(Stroke::new(1.0, BORDER_STRONG)),
+                    )
+                    .clicked()
+                {
                     self.start_action(
                         self.preferences.backend,
                         Action::Color(self.color[0], self.color[1], self.color[2]),
@@ -1116,230 +1280,99 @@ impl App {
 
     fn draw_setup_prompt(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            ui.label(RichText::new("Conecta tu foco").size(24.0).strong());
+            ui.label(display("Conecta tu foco", 23.0));
             ui.add_space(8.0);
             ui.label("Configura una conexión local para usar la red de casa, o WiZ Cloud para controlar el foco desde cualquier lugar.");
             ui.add_space(18.0);
-            if ui.button("Abrir configuración").clicked() {
+            if primary_button(ui, "Abrir configuración", self.accent_color()).clicked() {
                 self.page = Page::Connections;
             }
         });
-    }
-
-    fn draw_hero_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let state = self.pilot.map(|pilot| pilot.state);
-        let mode = self
-            .pilot
-            .map(|pilot| scene_name(pilot.scene_id).to_string())
-            .unwrap_or_else(|| "Esperando estado del foco".to_string());
-        let time = ctx.input(|input| input.time);
-        let pulse = if self.animations_enabled && state == Some(true) {
-            ((time * 1.5).sin() * 0.5 + 0.5) as f32
-        } else {
-            0.0
-        };
-        egui::Frame::new()
-            .fill(SURFACE)
-            .stroke(Stroke::new(1.0, mix(BORDER, ACCENT, 0.12 + pulse * 0.3)))
-            .corner_radius(CornerRadius::same(18))
-            .shadow(egui::epaint::Shadow {
-                offset: [0, 3],
-                blur: 20,
-                spread: 0,
-                color: Color32::from_black_alpha(12),
-            })
-            .inner_margin(Margin::same(24))
-            .show(ui, |ui| {
-                let content_width = ui.available_width();
-                let compact = content_width < 760.0;
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(content_width * 0.56, 330.0),
-                        Layout::top_down(Align::Min),
-                        |ui| {
-                            ui.label(
-                                RichText::new(if state == Some(true) {
-                                    "●  LUZ ACTIVA"
-                                } else if state == Some(false) {
-                                    "●  LUZ EN PAUSA"
-                                } else {
-                                    "●  SIN LECTURA"
-                                })
-                                .size(10.0)
-                                .strong()
-                                .color(if state == Some(true) {
-                                    mix(ACCENT_DARK, ACCENT, pulse * 0.6)
-                                } else {
-                                    MUTED
-                                }),
-                            );
-                            ui.add_space(23.0);
-                            ui.label(
-                                RichText::new(&self.preferences.device_name)
-                                    .size(if compact { 30.0 } else { 32.0 })
-                                    .strong()
-                                    .color(INK),
-                            );
-                            ui.add_space(2.0);
-                            ui.label(
-                                RichText::new(match state {
-                                    Some(true) => "Encendida",
-                                    Some(false) => "Apagada",
-                                    None => "Sin lectura",
-                                })
-                                .size(if compact { 42.0 } else { 46.0 })
-                                .strong()
-                                .color(if state == Some(true) {
-                                    ACCENT_DARK
-                                } else {
-                                    MUTED
-                                }),
-                            );
-                            ui.label(RichText::new(mode).size(14.0).color(MUTED));
-                            ui.add_space(26.0);
-                            ui.horizontal(|ui| {
-                                let toggle_label = if state == Some(true) {
-                                    "Apagar"
-                                } else {
-                                    "Encender"
-                                };
-                                let toggle_width = if compact { 138.0 } else { 180.0 };
-                                let daylight_width = if compact { 146.0 } else { 190.0 };
-                                let button_height = if compact { 48.0 } else { 56.0 };
-                                if ui
-                                    .add_sized(
-                                        [toggle_width, button_height],
-                                        egui::Button::new(
-                                            RichText::new(toggle_label).strong().color(INK),
-                                        )
-                                        .fill(ACCENT)
-                                        .corner_radius(CornerRadius::same(9))
-                                        .stroke(Stroke::NONE),
-                                    )
-                                    .clicked()
-                                {
-                                    let action = if state == Some(true) {
-                                        Action::Off
-                                    } else {
-                                        Action::Daylight
-                                    };
-                                    self.start_action(self.preferences.backend, action, ctx);
-                                }
-                                if ui
-                                    .add_sized(
-                                        [daylight_width, button_height],
-                                        egui::Button::new(RichText::new("Luz de día").color(INK))
-                                            .fill(SURFACE_SOFT)
-                                            .corner_radius(CornerRadius::same(9))
-                                            .stroke(Stroke::new(1.0, BORDER_STRONG)),
-                                    )
-                                    .clicked()
-                                {
-                                    self.start_action(
-                                        self.preferences.backend,
-                                        Action::Daylight,
-                                        ctx,
-                                    );
-                                }
-                            });
-                            ui.add_space(14.0);
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(format!(
-                                        "Conexión · {}",
-                                        self.preferences.backend.label()
-                                    ))
-                                    .size(11.0)
-                                    .color(MUTED),
-                                );
-                                if let Some(pilot) = self.pilot {
-                                    if let Some(dimming) = pilot.dimming {
-                                        ui.label(
-                                            RichText::new(format!("· Brillo {dimming} %"))
-                                                .size(11.0)
-                                                .color(MUTED),
-                                        );
-                                    }
-                                    paint_signal(ui, pilot.rssi);
-                                }
-                            });
-                        },
-                    );
-                    ui.separator();
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(content_width * 0.39, 330.0),
-                        Layout::top_down(Align::Center),
-                        |ui| {
-                            let (rect, _) = ui.allocate_exact_size(
-                                Vec2::new(ui.available_width(), 330.0),
-                                Sense::hover(),
-                            );
-                            paint_bulb(
-                                ui.painter(),
-                                rect,
-                                self.pilot,
-                                self.animations_enabled,
-                                time,
-                                self.visual_color,
-                            );
-                        },
-                    );
-                });
-            });
     }
 
     fn draw_temperature_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let Some((minimum, maximum)) = self.connections.white_range(self.preferences.backend)
         else {
             card(ui, |ui| {
-                ui.label(RichText::new("Temperatura de color").size(17.0).strong());
+                ui.label(display("Temperatura", 15.0));
                 ui.label("Este foco no informa un rango de blanco variable en su exportación.");
             });
             return;
         };
+        let accent = self.accent_color();
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Temperatura de color").size(19.0).strong());
+                ui.label(display("Temperatura", 15.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!("{} K", self.temperature))
-                            .size(23.0)
-                            .strong()
-                            .color(ACCENT_DARK),
+                            .font(display_font(24.0))
+                            .color(accent),
                     );
                 });
             });
+            ui.label(
+                RichText::new("Blanco cálido o frío")
+                    .size(12.0)
+                    .color(MUTED),
+            );
+            ui.add_space(16.0);
             self.temperature = self.temperature.clamp(minimum, maximum);
             ui.spacing_mut().slider_width = ui.available_width();
-            let response = ui.add(
-                egui::Slider::new(&mut self.temperature, minimum..=maximum)
-                    .step_by(100.0)
-                    .show_value(false),
-            );
-            if response.changed() {
-                ctx.request_repaint();
+            let response = ui
+                .scope(|ui| {
+                    ui.visuals_mut().selection.bg_fill = accent;
+                    ui.add(
+                        egui::Slider::new(&mut self.temperature, minimum..=maximum)
+                            .step_by(100.0)
+                            .suffix(" K")
+                            .show_value(false)
+                            .trailing_fill(true)
+                            .handle_shape(egui::style::HandleShape::Circle),
+                    )
+                })
+                .inner;
+            if response.drag_stopped() || (response.changed() && !response.dragged()) {
+                self.start_action(
+                    self.preferences.backend,
+                    Action::Temperature(self.temperature),
+                    ctx,
+                );
             }
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{minimum} K · cálida"))
-                        .size(10.0)
+                    RichText::new(format!("{minimum} K, cálida"))
+                        .size(12.0)
                         .color(ACCENT_DARK),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
-                        RichText::new(format!("{maximum} K · fría"))
-                            .size(10.0)
-                            .color(Color32::from_rgb(79, 127, 161)),
+                        RichText::new(format!("{maximum} K, fría"))
+                            .size(12.0)
+                            .color(Color32::from_rgb(122, 178, 255)),
                     );
                 });
             });
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
                 for temperature in temperature_options((minimum, maximum)) {
+                    let selected = self.temperature == temperature;
                     if ui
-                        .selectable_label(
-                            self.temperature == temperature,
-                            format!("{temperature} K"),
+                        .add(
+                            egui::Button::new(
+                                RichText::new(format!("{temperature} K"))
+                                    .size(12.0)
+                                    .color(if selected { ON_ACCENT } else { MUTED }),
+                            )
+                            .min_size(Vec2::new(58.0, 28.0))
+                            .fill(if selected {
+                                accent
+                            } else {
+                                Color32::TRANSPARENT
+                            })
+                            .corner_radius(CornerRadius::same(8))
+                            .stroke(Stroke::new(1.0, if selected { accent } else { BORDER })),
                         )
                         .clicked()
                     {
@@ -1352,35 +1385,29 @@ impl App {
                     }
                 }
             });
-            if ui
-                .add(
-                    egui::Button::new(RichText::new("Aplicar temperatura").strong().color(INK))
-                        .fill(ACCENT)
-                        .corner_radius(CornerRadius::same(8))
-                        .stroke(Stroke::NONE),
-                )
-                .clicked()
-            {
-                self.start_action(
-                    self.preferences.backend,
-                    Action::Temperature(self.temperature),
-                    ctx,
-                );
-            }
         });
     }
 
     fn draw_scenes_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Escenas").size(19.0).strong());
+                ui.label(display("Escenas", 15.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
-                        .small_button(if self.show_all_scenes {
-                            "Favoritas"
-                        } else {
-                            "Ver todas (28)"
-                        })
+                        .add(
+                            egui::Button::new(
+                                RichText::new(if self.show_all_scenes {
+                                    "Ver favoritas"
+                                } else {
+                                    "Ver todas"
+                                })
+                                .size(12.0)
+                                .color(MUTED),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE),
+                        )
+                        .on_hover_text("28 escenas en total")
                         .clicked()
                     {
                         self.show_all_scenes = !self.show_all_scenes;
@@ -1417,7 +1444,7 @@ impl App {
             if show_all {
                 ui.label(
                     RichText::new("Algunas escenas necesitan un foco WiZ de color.")
-                        .size(10.0)
+                        .size(12.0)
                         .color(MUTED),
                 );
             }
@@ -1425,18 +1452,32 @@ impl App {
     }
 
     fn draw_routines(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.set_max_width(880.0);
         card(ui, |ui| {
-            ui.label(RichText::new("Apagado automático").size(20.0).strong());
+            ui.label(display("Apagado automático", 17.0));
             ui.label("Programa el apagado del foco después de un intervalo.");
             ui.add_space(18.0);
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::Slider::new(&mut self.timer_minutes, 5..=180)
-                        .step_by(5.0)
-                        .suffix(" min"),
+                let accent = self.accent_color();
+                ui.scope(|ui| {
+                    ui.spacing_mut().slider_width = 220.0;
+                    ui.visuals_mut().selection.bg_fill = accent;
+                    ui.add(
+                        egui::Slider::new(&mut self.timer_minutes, 5..=180)
+                            .step_by(5.0)
+                            .show_value(false)
+                            .trailing_fill(true),
+                    );
+                });
+                ui.label(
+                    RichText::new(format!("{} min", self.timer_minutes))
+                        .size(13.0)
+                        .strong()
+                        .color(accent),
                 );
+                ui.add_space(6.0);
                 if self.timer_due.is_none() {
-                    if ui.button("Iniciar rutina").clicked() {
+                    if primary_button(ui, "Iniciar rutina", self.accent_color()).clicked() {
                         self.timer_due = Some(
                             Instant::now()
                                 + Duration::from_secs(u64::from(self.timer_minutes) * 60),
@@ -1465,13 +1506,13 @@ impl App {
                 );
             }
             ui.add_space(12.0);
-            ui.label(RichText::new("La rutina sigue activa al ocultar la ventana en la bandeja y se cancela al salir de WiZ Tray.").size(11.0).color(MUTED));
+            ui.label(RichText::new("La rutina sigue activa al ocultar la ventana en la bandeja y se cancela al salir de WiZ Tray.").size(12.0).color(MUTED));
         });
         ui.add_space(14.0);
         let saved_routine = &self.preferences.daily_routine;
         let saved_status = if saved_routine.enabled {
             format!(
-                "Activa · todos los días a {:02}:{:02} · {}",
+                "Activa, todos los días a las {:02}:{:02}. Acción: {}",
                 saved_routine.minute_of_day / 60,
                 saved_routine.minute_of_day % 60,
                 saved_routine.action.label()
@@ -1481,7 +1522,7 @@ impl App {
         };
         let mut save_routine = false;
         card(ui, |ui| {
-            ui.label(RichText::new("Rutina diaria").size(20.0).strong());
+            ui.label(display("Rutina diaria", 17.0));
             ui.label("Programa una acción que se repetirá cada día.");
             ui.add_space(10.0);
             ui.checkbox(&mut self.routine_draft.enabled, "Activar rutina diaria");
@@ -1512,15 +1553,19 @@ impl App {
                 );
             });
             ui.add_space(4.0);
-            ui.label(RichText::new(saved_status).size(11.0).color(MUTED));
-            ui.label(RichText::new("Se ejecuta mientras WiZ Tray esté abierta en la bandeja. Cloud necesita una sesión iniciada.").size(10.0).color(MUTED));
+            ui.label(RichText::new(saved_status).size(12.0).color(MUTED));
+            ui.label(RichText::new("Se ejecuta mientras WiZ Tray esté abierta en la bandeja. Cloud necesita una sesión iniciada.").size(12.0).color(MUTED));
             ui.add_space(8.0);
             save_routine = ui
                 .add(
-                    egui::Button::new(RichText::new("Guardar rutina diaria").strong().color(INK))
-                        .fill(ACCENT)
-                        .corner_radius(CornerRadius::same(8))
-                        .stroke(Stroke::NONE),
+                    egui::Button::new(
+                        RichText::new("Guardar rutina diaria")
+                            .strong()
+                            .color(ON_ACCENT),
+                    )
+                    .fill(ACCENT)
+                    .corner_radius(CornerRadius::same(8))
+                    .stroke(Stroke::NONE),
                 )
                 .clicked();
         });
@@ -1529,7 +1574,7 @@ impl App {
         }
         ui.add_space(14.0);
         card(ui, |ui| {
-            ui.label(RichText::new("Accesos rápidos").size(16.0).strong());
+            ui.label(display("Accesos rápidos", 15.0));
             ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
                 for (label, action) in [
@@ -1567,16 +1612,26 @@ impl App {
     }
 
     fn draw_connections(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.set_max_width(880.0);
+        let accent = self.accent_color();
         ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.setup_tab == Backend::Local, "Local · misma red")
-                .clicked()
+            if tab_button(
+                ui,
+                "Local (misma red)",
+                self.setup_tab == Backend::Local,
+                accent,
+            )
+            .clicked()
             {
                 self.setup_tab = Backend::Local;
             }
-            if ui
-                .selectable_label(self.setup_tab == Backend::Cloud, "WiZ Cloud · remoto")
-                .clicked()
+            if tab_button(
+                ui,
+                "WiZ Cloud (remoto)",
+                self.setup_tab == Backend::Cloud,
+                accent,
+            )
+            .clicked()
             {
                 self.setup_tab = Backend::Cloud;
             }
@@ -1590,13 +1645,13 @@ impl App {
 
     fn draw_local_setup(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         card(ui, |ui| {
-            ui.label(RichText::new("Conexión local").size(20.0).strong());
-            ui.label("Controla el foco directamente por Wi-Fi. No necesita iniciar sesión ni depender de WiZ Cloud.");
+            ui.label(display("Conexión local", 17.0));
+            ui.label("Directo por Wi-Fi, sin cuenta ni nube.");
             ui.add_space(16.0);
-            ui.label(RichText::new("1 · Activa el control local").strong());
+            ui.label(RichText::new("1. Activa el control local").strong());
             ui.label("En WiZ: Ajustes → Seguridad → activa la comunicación local.");
             ui.add_space(8.0);
-            ui.label(RichText::new("2 · Encuentra el foco").strong());
+            ui.label(RichText::new("2. Encuentra el foco").strong());
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
@@ -1609,7 +1664,7 @@ impl App {
                 }
                 if self.discovery_running {
                     ui.spinner();
-                    ui.label(RichText::new("Escaneando la red…").size(11.0).color(MUTED));
+                    ui.label(RichText::new("Escaneando la red…").size(12.0).color(MUTED));
                 }
             });
             if !self.discovered.is_empty() {
@@ -1619,13 +1674,13 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(light.ip.to_string()).monospace().size(12.0));
                         ui.label(
-                            RichText::new(format!("· {}", short_mac(&light.mac)))
-                                .size(11.0)
+                            RichText::new(format!("MAC {}", short_mac(&light.mac)))
+                                .size(12.0)
                                 .color(MUTED),
                         );
                         ui.label(
                             RichText::new(if light.state { "Encendida" } else { "Apagada" })
-                                .size(11.0)
+                                .size(12.0)
                                 .color(if light.state { SUCCESS } else { MUTED }),
                         );
                         if ui.small_button("Usar y conectar").clicked() {
@@ -1642,7 +1697,7 @@ impl App {
                 }
             }
             ui.add_space(8.0);
-            ui.label(RichText::new("3 · Datos del foco").strong());
+            ui.label(RichText::new("3. Datos del foco").strong());
             ui.horizontal(|ui| {
                 ui.label("IP local");
                 ui.add(
@@ -1666,7 +1721,7 @@ impl App {
                 );
             });
             ui.add_space(8.0);
-            ui.label(RichText::new("4 · Token de firma (opcional)").strong());
+            ui.label(RichText::new("4. Token de firma (opcional)").strong());
             ui.horizontal(|ui| {
                 let displayed = if self.draft.local_export.is_empty() {
                     "Sin export: comandos sin firma".to_string()
@@ -1677,7 +1732,7 @@ impl App {
                         .unwrap_or("Export WiZ seleccionado")
                         .to_string()
                 };
-                ui.label(RichText::new(displayed).size(11.0).color(MUTED));
+                ui.label(RichText::new(displayed).size(12.0).color(MUTED));
                 if ui.button("Elegir export…").clicked()
                     && let Some(path) = rfd::FileDialog::new()
                         .add_filter("Export WiZ", &["json"])
@@ -1700,7 +1755,7 @@ impl App {
                 if !self.export_devices.is_empty() {
                     let devices = self.export_devices.clone();
                     let mut selected_mac = normalize_mac(&self.draft.local_mac);
-                    egui::ComboBox::from_label("Foco")
+                    egui::ComboBox::from_id_salt("export_device_pick")
                         .selected_text(selected_device_name(&devices, &selected_mac))
                         .show_ui(ui, |ui| {
                             for device in &devices {
@@ -1728,21 +1783,16 @@ impl App {
                 .any(|device| device.mac == normalize_mac(&self.draft.local_mac));
             ui.label(
                 RichText::new(if self.draft.local_export.trim().is_empty() {
-                    "Sin token: la app enviará comandos locales sin firma. Funciona en muchos firmwares; si tu foco los rechaza, importa el export."
+                    "Sin token: comandos sin firma. Suele funcionar; si el foco los rechaza, importa el export."
                 } else if export_has_light {
-                    "Export cargado para este foco: si contiene la clave, los comandos se firman."
+                    "Export cargado: los comandos se firman con su clave."
                 } else {
-                    "El export no contiene este foco; se usará sin token."
+                    "El export no incluye este foco; se usará sin token."
                 })
-                .size(11.0)
+                .size(12.0)
                 .color(MUTED),
             );
-            ui.label("El export contiene una clave privada de control. Se queda en tu equipo; no lo compartas ni lo subas a GitHub.");
-            ui.collapsing("¿Hace falta el token? ¿Cómo se encuentra el foco?", |ui| {
-                ui.label("La app habla UDP 38899 directamente con el foco. El token es la clave HMAC del export: algunos firmwares nuevos rechazan comandos sin firma, otros (como la mayoría de focos domésticos) los aceptan.");
-                ui.label("La búsqueda escanea tu subred /24 con getPilot sin firma y muestra IP + MAC. Después puedes guardar sin token. Si el foco no aparece, escribe la IP y la MAC a mano.");
-                ui.label("Todo queda en tu red local: no se envía nada a WiZ ni a Google.");
-            });
+            ui.label("El export tiene una clave privada. Se queda en tu equipo: no lo compartas.");
             ui.add_space(12.0);
             if let Some(error) = &self.last_error {
                 ui.colored_label(ERROR, error);
@@ -1750,7 +1800,7 @@ impl App {
             if ui
                 .add_sized(
                     [170.0, 42.0],
-                    egui::Button::new(RichText::new("Guardar y probar").strong().color(INK))
+                    egui::Button::new(RichText::new("Guardar y probar").strong().color(ON_ACCENT))
                         .fill(ACCENT)
                         .corner_radius(CornerRadius::same(8))
                         .stroke(Stroke::NONE),
@@ -1765,10 +1815,15 @@ impl App {
             if self.connections.has(Backend::Local) {
                 ui.label(
                     RichText::new("Configuración local guardada en este perfil de Windows.")
-                        .size(11.0)
+                        .size(12.0)
                         .color(SUCCESS),
                 );
             }
+            ui.collapsing("¿Hace falta el token? ¿Cómo se encuentra el foco?", |ui| {
+                ui.label("La app habla UDP 38899 con el foco. El token es la clave HMAC del export: los firmwares nuevos suelen exigirla; la mayoría de los domésticos, no.");
+                ui.label("La búsqueda escanea tu subred /24 con getPilot y muestra IP + MAC. Si el foco no aparece, escribe ambos a mano.");
+                ui.label("Todo ocurre en tu red local: nada se envía a WiZ ni a Google.");
+            });
         });
     }
 
@@ -1780,7 +1835,7 @@ impl App {
             .iter()
             .find(|device| device.mac == light.mac)
             .map(|device| device.name.clone())
-            .unwrap_or_else(|| format!("Foco WiZ · {}", short_mac(&light.mac)));
+            .unwrap_or_else(|| format!("Foco WiZ ({})", short_mac(&light.mac)));
         self.last_error = None;
         self.set_status(&format!("Foco seleccionado: {}", self.draft.device_name));
     }
@@ -1795,7 +1850,7 @@ impl App {
                 .iter()
                 .find(|device| device.mac == self.draft.local_mac)
                 .map(|device| device.name.clone())
-                .unwrap_or_else(|| format!("Foco WiZ · {}", short_mac(&self.draft.local_mac)));
+                .unwrap_or_else(|| format!("Foco WiZ ({})", short_mac(&self.draft.local_mac)));
         }
         let backend_changed = self.preferences.backend != Backend::Local;
         self.draft.backend = Backend::Local;
@@ -1815,11 +1870,17 @@ impl App {
     }
 
     fn draw_cloud_setup(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if !self.cloud_discovery_started && self.draft.cloud_mac.trim().is_empty() {
+            self.cloud_discovery_started = true;
+            self.start_discovery(ctx);
+        }
         card(ui, |ui| {
-            ui.label(RichText::new("WiZ Cloud").size(20.0).strong());
-            ui.label("Control remoto mientras este equipo siga encendido, conectado a internet y WiZ Tray permanezca abierto en la bandeja.");
+            ui.label(display("WiZ Cloud", 17.0));
+            ui.label(
+                "Control remoto: este equipo debe seguir encendido, con internet y la app abierta.",
+            );
             ui.add_space(10.0);
-            ui.label("La API doméstica de WiZ no está documentada para terceros. Google confirma tu cuenta; WiZ requiere credenciales OAuth privadas propias, que no se incluyen en el repositorio.");
+            ui.label("La API doméstica de WiZ no es pública. Google confirma tu cuenta, pero WiZ pide credenciales OAuth privadas que este repo no incluye.");
             ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
                 let checks = [
@@ -1833,97 +1894,195 @@ impl App {
                     ("Sesión", has_cloud_session()),
                 ];
                 for (label, done) in checks {
-                    ui.label(
-                        RichText::new(format!("{} {label}", if done { "✓" } else { "○" }))
-                            .size(11.0)
-                            .color(if done { SUCCESS } else { MUTED }),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0;
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(9.0), Sense::hover());
+                        ui.painter().circle_filled(
+                            rect.center(),
+                            3.4,
+                            if done { SUCCESS } else { BORDER_STRONG },
+                        );
+                        ui.label(RichText::new(label).size(12.0).color(if done {
+                            SUCCESS
+                        } else {
+                            MUTED
+                        }));
+                    });
                 }
             });
             ui.add_space(14.0);
-            ui.label(RichText::new("1 · Identifica el foco y el hogar").strong());
-            ui.label("Importa el export WiZ para rellenar los datos, o escribe el ID del foco, el ID del hogar y la MAC.");
-            text_field(
-                ui,
-                "ID del foco",
-                &mut self.draft.cloud_device_id,
-                "12345678",
-            );
-            text_field(
-                ui,
-                "ID del hogar",
-                &mut self.draft.cloud_home_id,
-                "123456789",
-            );
-            text_field(
-                ui,
-                "MAC del foco",
-                &mut self.draft.cloud_mac,
-                "AA:BB:CC:DD:EE:FF",
-            );
-            ui.horizontal(|ui| {
-                if ui.button("Importar export WiZ…").clicked()
-                    && let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Export WiZ", &["json"])
-                        .set_title("Selecciona el export local de WiZ")
-                        .pick_file()
+            let accent = self.accent_color();
+            ui.horizontal_wrapped(|ui| {
+                for (step, label) in ["1 · Foco", "2 · Acceso", "3 · Conectar"]
+                    .iter()
+                    .enumerate()
                 {
-                    match load_export_devices(path.to_string_lossy().as_ref()) {
-                        Ok(devices) => {
-                            self.export_devices = devices;
-                            self.draft.local_export = path.to_string_lossy().into_owned();
-                            if let Some(device) = self.export_devices.first().cloned() {
-                                self.draft.local_mac = device.mac.clone();
-                                self.use_cloud_export_device(&device);
-                            }
-                            self.last_error = None;
-                        }
-                        Err(error) => self.last_error = Some(error),
+                    if tab_button(ui, label, self.cloud_setup_step == step, accent).clicked() {
+                        self.cloud_setup_step = step;
                     }
                 }
-                if !self.export_devices.is_empty() {
-                    let devices = self.export_devices.clone();
-                    let mut selected_mac = self.draft.cloud_mac.clone();
-                    egui::ComboBox::from_label("Foco")
-                        .selected_text(selected_device_name(&devices, &selected_mac))
-                        .show_ui(ui, |ui| {
-                            for device in &devices {
-                                ui.selectable_value(
-                                    &mut selected_mac,
-                                    device.mac.clone(),
-                                    &device.name,
+            });
+            ui.add_space(12.0);
+            if self.cloud_setup_step == 0 {
+                ui.label(RichText::new("Encuentra tu foco").strong());
+                ui.label("Buscamos la MAC del foco en tu Wi-Fi. Elige el dispositivo correcto; la búsqueda no obtiene los IDs de Cloud.");
+                if self.discovery_running {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Buscando focos en la red…");
+                    });
+                } else if primary_button(ui, "Buscar de nuevo en mi red", accent).clicked() {
+                    self.start_discovery(ctx);
+                }
+                for light in self.discovered.clone() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!("Foco · {} · {}", light.ip, light.mac));
+                        if primary_button(ui, "Usar este foco", accent).clicked() {
+                            let mac = normalize_mac(&light.mac);
+                            if mac.len() == 12 && mac.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                                self.draft.cloud_mac = mac.clone();
+                                if let Some(device) = self
+                                    .export_devices
+                                    .iter()
+                                    .find(|device| normalize_mac(&device.mac) == mac)
+                                    .cloned()
+                                {
+                                    self.use_cloud_export_device(&device);
+                                }
+                            } else {
+                                self.last_error = Some(
+                                    "El foco devolvió una MAC inválida. Prueba otro dispositivo."
+                                        .into(),
                                 );
                             }
-                        });
-                    if selected_mac != self.draft.cloud_mac
-                        && let Some(device) =
-                            devices.iter().find(|device| device.mac == selected_mac)
-                    {
-                        self.use_cloud_export_device(device);
-                    }
+                        }
+                    });
                 }
+                ui.collapsing("No aparece · Ayuda desde el móvil", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (number, title, detail) in [
+                        ("01", "Misma Wi-Fi", "Conecta el móvil, el foco y el PC a tu red doméstica; evita la red de invitados."),
+                        ("02", "App WiZ", "Abre WiZ y comprueba que puedes controlar el foco. Activa la comunicación local en Ajustes → Seguridad, si aparece."),
+                        ("03", "Vuelve a buscar", "Reintenta aquí. Si sigue sin aparecer, consulta la información del foco en WiZ o en tu router para localizar su MAC."),
+                    ] {
+                        egui::Frame::new().fill(SURFACE_SOFT).corner_radius(10).inner_margin(12).show(ui, |ui| {
+                            ui.set_max_width(210.0);
+                            ui.label(RichText::new(number).size(24.0).color(ACCENT_DARK));
+                            ui.label(RichText::new(title).strong());
+                            ui.label(detail);
+                        });
+                    }
+                });
+                ui.label("Si ya tienes un export compatible, selecciónalo abajo desde este equipo. La disponibilidad de información y exportación varía según la versión de WiZ.");
             });
-            ui.horizontal(|ui| {
-                ui.label("Rango de blanco (K)");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.cloud_minimum)
-                        .hint_text("2200")
-                        .desired_width(80.0),
+                ui.add_space(12.0);
+                ui.label(RichText::new("Identifica el foco y el hogar").strong());
+                ui.label("Importa el export WiZ para rellenar los datos, o escribe el ID del foco, el ID del hogar y la MAC.");
+                text_field(
+                    ui,
+                    "ID del foco",
+                    &mut self.draft.cloud_device_id,
+                    "12345678",
                 );
-                ui.label("a");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.cloud_maximum)
-                        .hint_text("6500")
-                        .desired_width(80.0),
+                text_field(
+                    ui,
+                    "ID del hogar",
+                    &mut self.draft.cloud_home_id,
+                    "123456789",
                 );
-                ui.label(RichText::new("opcional").size(10.0).color(MUTED));
-            });
-            ui.add_space(14.0);
-            ui.label(RichText::new("2 · Configura OAuth").strong());
-            ui.label("Necesitas el Client ID privado y el secreto de WiZ. Añade también el Client ID de Google; su secreto es opcional.");
-            ui.collapsing("Guía: cómo obtener estas credenciales", |ui| {
-                ui.label(RichText::new("1 · Google").strong());
-                ui.label("Crea un cliente OAuth de tipo «App de escritorio». No hace falta habilitar APIs ni registrar la URL de retorno: la app abre http://127.0.0.1 con un puerto dinámico y Google acepta ese loopback en clientes Desktop.");
+                text_field(
+                    ui,
+                    "MAC del foco",
+                    &mut self.draft.cloud_mac,
+                    "AA:BB:CC:DD:EE:FF",
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Importar export WiZ…").clicked()
+                        && let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Export WiZ", &["json"])
+                            .set_title("Selecciona el export local de WiZ")
+                            .pick_file()
+                    {
+                        match load_export_devices(path.to_string_lossy().as_ref()) {
+                            Ok(devices) => {
+                                self.export_devices = devices;
+                                self.draft.local_export = path.to_string_lossy().into_owned();
+                                if let Some(device) = self.export_devices.first().cloned() {
+                                    self.draft.local_mac = device.mac.clone();
+                                    self.use_cloud_export_device(&device);
+                                }
+                                self.last_error = None;
+                            }
+                            Err(error) => self.last_error = Some(error),
+                        }
+                    }
+                    if !self.export_devices.is_empty() {
+                        let devices = self.export_devices.clone();
+                        let mut selected_mac = self.draft.cloud_mac.clone();
+                        egui::ComboBox::from_id_salt("export_device_pick")
+                            .selected_text(selected_device_name(&devices, &selected_mac))
+                            .show_ui(ui, |ui| {
+                                for device in &devices {
+                                    ui.selectable_value(
+                                        &mut selected_mac,
+                                        device.mac.clone(),
+                                        &device.name,
+                                    );
+                                }
+                            });
+                        if selected_mac != self.draft.cloud_mac
+                            && let Some(device) =
+                                devices.iter().find(|device| device.mac == selected_mac)
+                        {
+                            self.use_cloud_export_device(device);
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Rango de blanco (K)");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.cloud_minimum)
+                            .hint_text("2200")
+                            .desired_width(80.0),
+                    );
+                    ui.label("a");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.cloud_maximum)
+                            .hint_text("6500")
+                            .desired_width(80.0),
+                    );
+                    ui.label(RichText::new("opcional").size(12.0).color(MUTED));
+                });
+                ui.add_space(14.0);
+                let identity_ready = self
+                    .draft
+                    .cloud_device_id
+                    .parse::<u64>()
+                    .is_ok_and(|id| id > 0)
+                    && self
+                        .draft
+                        .cloud_home_id
+                        .parse::<u64>()
+                        .is_ok_and(|id| id > 0)
+                    && {
+                        let mac = normalize_mac(&self.draft.cloud_mac);
+                        mac.len() == 12 && mac.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    };
+                if ui
+                    .add_enabled(identity_ready, egui::Button::new("Continuar · Acceso"))
+                    .clicked()
+                {
+                    self.cloud_setup_step = 1;
+                }
+            }
+            if self.cloud_setup_step == 1 {
+                ui.label(RichText::new("Prepara el acceso seguro").strong());
+                ui.label(
+                "WiZ: Client ID y secreto privados. Google: su Client ID; el secreto es opcional.",
+            );
+                ui.collapsing("Guía: cómo obtener estas credenciales", |ui| {
+                ui.label(RichText::new("1. Google").strong());
+                ui.label("Crea un cliente OAuth de tipo «App de escritorio». No hace falta habilitar APIs ni registrar la URL de retorno: la app usa el loopback 127.0.0.1.");
                 ui.horizontal(|ui| {
                     ui.hyperlink_to(
                         "Abrir Google Cloud Console",
@@ -1936,110 +2095,117 @@ impl App {
                 });
                 ui.label("Si el proyecto está en modo prueba, agrega tu cuenta como usuario de prueba.");
                 ui.add_space(8.0);
-                ui.label(RichText::new("2 · WiZ").strong());
-                ui.label("El Client ID y el secreto son los que usa la app oficial de WiZ para su API doméstica. WiZ no los publica: se obtienen del cliente oficial en un dispositivo propio. No los compartas ni los subas al repositorio.");
+                ui.label(RichText::new("2. WiZ").strong());
+                ui.label("Son los de la app oficial de WiZ. WiZ no los publica: se obtienen del cliente oficial en un dispositivo propio. No los compartas.");
                 ui.add_space(8.0);
-                ui.label(RichText::new("3 · Guarda y autoriza").strong());
-                ui.label("Pega los valores, pulsa Guardar Cloud y luego Iniciar sesión con Google. El navegador vuelve solo a la app y la sesión queda cifrada con DPAPI.");
+                ui.label(RichText::new("3. Guarda y autoriza").strong());
+                ui.label("Guarda Cloud, pulsa Iniciar sesión con Google y vuelve sola a la app. La sesión queda cifrada con DPAPI.");
                 ui.label(
                     RichText::new("Errores típicos: redirect_uri_mismatch → usa un cliente Desktop; invalid_client → ID o secreto incorrectos; access_denied → falta tu usuario de prueba.")
-                        .size(11.0)
+                        .size(12.0)
                         .color(MUTED),
                 );
             });
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Credenciales de OAuth").strong());
-                if self.cloud_credentials.is_some() && !self.replace_credentials {
-                    ui.label(
-                        RichText::new("Protegidas con Windows DPAPI")
-                            .size(10.0)
-                            .color(SUCCESS),
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Credenciales de OAuth").strong());
+                    if self.cloud_credentials.is_some() && !self.replace_credentials {
+                        ui.label(
+                            RichText::new("Protegidas con Windows DPAPI")
+                                .size(12.0)
+                                .color(SUCCESS),
+                        );
+                        if ui.small_button("Reemplazar").clicked() {
+                            self.replace_credentials = true;
+                        }
+                    }
+                });
+                if self.cloud_credentials.is_none() || self.replace_credentials {
+                    text_field(
+                        ui,
+                        "Client ID de Google",
+                        &mut self.google_client_id,
+                        "...apps.googleusercontent.com",
                     );
-                    if ui.small_button("Reemplazar").clicked() {
-                        self.replace_credentials = true;
+                    secret_field(
+                        ui,
+                        "Secreto Google (si aplica)",
+                        &mut self.google_client_secret,
+                    );
+                    secret_field(ui, "Client ID privado de WiZ", &mut self.wiz_client_id);
+                    secret_field(ui, "Secreto privado de WiZ", &mut self.wiz_client_secret);
+                    ui.label(RichText::new("Al guardar, estos valores se cifran con DPAPI y quedan ligados a tu perfil de Windows.").size(12.0).color(MUTED));
+                }
+                ui.add_space(12.0);
+                if let Some(error) = &self.last_error {
+                    ui.colored_label(ERROR, error);
+                    if let Some(hint) = cloud_error_hint(error) {
+                        ui.label(RichText::new(hint).size(12.0).color(MUTED));
                     }
                 }
-            });
-            if self.cloud_credentials.is_none() || self.replace_credentials {
-                text_field(
-                    ui,
-                    "Client ID de Google",
-                    &mut self.google_client_id,
-                    "...apps.googleusercontent.com",
-                );
-                secret_field(
-                    ui,
-                    "Secreto Google (si aplica)",
-                    &mut self.google_client_secret,
-                );
-                secret_field(ui, "Client ID privado de WiZ", &mut self.wiz_client_id);
-                secret_field(ui, "Secreto privado de WiZ", &mut self.wiz_client_secret);
-                ui.label(RichText::new("Al guardar, estos valores se cifran con DPAPI y quedan ligados a tu perfil de Windows.").size(10.0).color(MUTED));
-            }
-            ui.add_space(12.0);
-            if let Some(error) = &self.last_error {
-                ui.colored_label(ERROR, error);
-                if let Some(hint) = cloud_error_hint(error) {
-                    ui.label(RichText::new(hint).size(11.0).color(MUTED));
+                if primary_button(ui, "Continuar · Conectar", accent).clicked() {
+                    self.cloud_setup_step = 2;
                 }
             }
-            ui.label(RichText::new("3 · Guarda y autoriza la sesión").strong());
-            ui.label("Guarda Cloud y luego inicia sesión con Google en el navegador. La app vuelve por 127.0.0.1 y conserva la sesión en este perfil de Windows.");
-            ui.horizontal(|ui| {
-                if ui
-                    .add_sized(
-                        [150.0, 42.0],
-                        egui::Button::new(RichText::new("Guardar Cloud").strong().color(INK))
-                            .fill(ACCENT)
-                            .corner_radius(CornerRadius::same(8))
-                            .stroke(Stroke::NONE),
-                    )
-                    .clicked()
-                {
-                    if let Err(error) = self.save_cloud_setup() {
-                        self.last_error = Some(error);
+            if self.cloud_setup_step == 2 {
+                ui.label(RichText::new("Conecta y comprueba el foco").strong());
+                ui.label("El navegador abre Google; después comprobamos que WiZ Cloud puede leer tu foco.");
+                if let Some(error) = &self.last_error {
+                    ui.colored_label(ERROR, error);
+                    if let Some(hint) = cloud_error_hint(error) {
+                        ui.label(hint);
                     }
                 }
-                if self.connections.has(Backend::Cloud)
-                    && ui
-                        .add_sized(
-                            [180.0, 42.0],
-                            egui::Button::new("Iniciar sesión con Google"),
-                        )
-                        .clicked()
-                {
-                    self.set_backend(Backend::Cloud);
-                    self.page = Page::Home;
-                    self.start_action(Backend::Cloud, Action::Connect, ctx);
-                }
-                if self.connections.has(Backend::Cloud) && ui.button("Probar conexión").clicked() {
-                    self.set_backend(Backend::Cloud);
-                    self.page = Page::Home;
-                    let action = if has_cloud_session() {
-                        Action::Refresh
-                    } else {
-                        Action::Connect
-                    };
-                    self.start_action(Backend::Cloud, action, ctx);
-                }
-                if has_cloud_session() && ui.small_button("Desconectar sesión").clicked() {
-                    if let Err(error) = clear_cloud_session() {
-                        self.last_error = Some(error);
-                    } else {
-                        self.set_status("Sesión WiZ Cloud desconectada.");
+                ui.label("Guarda y autoriza con Google. La sesión vive en este perfil de Windows.");
+                ui.horizontal(|ui| {
+                    if primary_button(ui, "Guardar y conectar", accent).clicked() {
+                        match self.save_cloud_setup() {
+                            Ok(()) => self.start_action(Backend::Cloud, Action::Connect, ctx),
+                            Err(error) => self.last_error = Some(error),
+                        }
                     }
+                    if self.connections.has(Backend::Cloud)
+                        && ui
+                            .add_sized(
+                                [180.0, 42.0],
+                                egui::Button::new("Iniciar sesión con Google"),
+                            )
+                            .clicked()
+                    {
+                        self.set_backend(Backend::Cloud);
+                        self.page = Page::Home;
+                        self.start_action(Backend::Cloud, Action::Connect, ctx);
+                    }
+                    if self.connections.has(Backend::Cloud)
+                        && ui.button("Probar conexión").clicked()
+                    {
+                        self.set_backend(Backend::Cloud);
+                        self.page = Page::Home;
+                        let action = if has_cloud_session() {
+                            Action::Refresh
+                        } else {
+                            Action::Connect
+                        };
+                        self.start_action(Backend::Cloud, action, ctx);
+                    }
+                    if has_cloud_session() && ui.small_button("Desconectar sesión").clicked() {
+                        if let Err(error) = clear_cloud_session() {
+                            self.last_error = Some(error);
+                        } else {
+                            self.set_status("Sesión WiZ Cloud desconectada.");
+                        }
+                    }
+                });
+                if self.connections.has(Backend::Cloud) {
+                    ui.label(
+                        RichText::new(if has_cloud_session() {
+                            "Sesión Cloud guardada en este perfil."
+                        } else {
+                            "Conexión configurada; falta iniciar sesión."
+                        })
+                        .size(12.0)
+                        .color(SUCCESS),
+                    );
                 }
-            });
-            if self.connections.has(Backend::Cloud) {
-                ui.label(
-                    RichText::new(if has_cloud_session() {
-                        "Sesión Cloud guardada en este perfil."
-                    } else {
-                        "Conexión configurada; falta iniciar sesión."
-                    })
-                    .size(11.0)
-                    .color(SUCCESS),
-                );
             }
         });
     }
@@ -2119,87 +2285,244 @@ impl eframe::App for App {
             return;
         }
         let ctx = ui.ctx().clone();
+        ui.painter().rect_filled(ui.max_rect(), 0, CANVAS);
         egui::Frame::new()
-            .fill(CANVAS)
+            .fill(Color32::TRANSPARENT)
             .show(ui, |ui| self.draw(ui, &ctx));
     }
 }
 
 fn apply_theme(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::light();
+    install_fonts(ctx);
+    let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = CANVAS;
     visuals.window_fill = SURFACE;
-    visuals.extreme_bg_color = SURFACE;
+    visuals.extreme_bg_color = SURFACE_SOFT;
     visuals.faint_bg_color = SURFACE_SOFT;
-    visuals.text_edit_bg_color = Some(SURFACE);
+    visuals.text_edit_bg_color = Some(SURFACE_SOFT);
     visuals.override_text_color = Some(INK);
     visuals.weak_text_color = Some(MUTED);
     visuals.hyperlink_color = ACCENT_DARK;
     visuals.selection.bg_fill = ACCENT_PALE;
-    visuals.selection.stroke = Stroke::new(1.0, ACCENT_DARK);
-    visuals.widgets.noninteractive.bg_fill = CANVAS;
+    visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+    visuals.widgets.noninteractive.bg_fill = SURFACE;
+    visuals.widgets.noninteractive.weak_bg_fill = SURFACE;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, INK);
     visuals.widgets.inactive.bg_fill = SURFACE_SOFT;
+    visuals.widgets.inactive.weak_bg_fill = SURFACE_SOFT;
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, INK);
-    visuals.widgets.hovered.bg_fill = ACCENT_PALE;
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(48, 48, 56);
+    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(48, 48, 56);
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, BORDER_STRONG);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, INK);
-    visuals.widgets.active.bg_fill = ACCENT;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_DARK);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, INK);
-    visuals.widgets.open.bg_fill = ACCENT_PALE;
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.4, INK);
+    visuals.widgets.active.bg_fill = ACCENT_PALE;
+    visuals.widgets.active.weak_bg_fill = ACCENT_PALE;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.4, INK);
+    visuals.widgets.open.bg_fill = SURFACE_SOFT;
+    visuals.widgets.open.weak_bg_fill = SURFACE_SOFT;
     visuals.widgets.open.bg_stroke = Stroke::new(1.0, BORDER_STRONG);
     visuals.widgets.open.fg_stroke = Stroke::new(1.0, INK);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(8);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(8);
     visuals.widgets.active.corner_radius = CornerRadius::same(8);
     visuals.widgets.open.corner_radius = CornerRadius::same(8);
-    ctx.set_theme(egui::ThemePreference::Light);
+    ctx.set_theme(egui::ThemePreference::Dark);
     ctx.set_visuals(visuals);
-    ctx.style_mut_of(egui::Theme::Light, |style| {
-        style.spacing.item_spacing = Vec2::new(12.0, 10.0);
-        style.spacing.button_padding = Vec2::new(14.0, 9.0);
+    ctx.style_mut_of(egui::Theme::Dark, |style| {
+        style.spacing.item_spacing = Vec2::new(14.0, 10.0);
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, FontId::proportional(14.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, FontId::proportional(14.0));
+        style.spacing.button_padding = Vec2::new(15.0, 9.0);
+        style.spacing.scroll.active_handle_opacity = 0.28;
+        style.spacing.scroll.interact_handle_opacity = 0.45;
     });
+}
+
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    let mut body_loaded = false;
+    if let Ok(bytes) = fs::read(r"C:\Windows\Fonts\segoeui.ttf") {
+        fonts.font_data.insert(
+            "wiz-body".to_owned(),
+            egui::FontData::from_owned(bytes).into(),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "wiz-body".to_owned());
+        body_loaded = true;
+    }
+    let mut display_family = Vec::new();
+    if let Ok(bytes) = fs::read(r"C:\Windows\Fonts\seguisb.ttf") {
+        fonts.font_data.insert(
+            "wiz-display".to_owned(),
+            egui::FontData::from_owned(bytes).into(),
+        );
+        display_family.push("wiz-display".to_owned());
+    }
+    display_family.extend(
+        fonts
+            .families
+            .get(&egui::FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    fonts
+        .families
+        .insert(egui::FontFamily::Name("display".into()), display_family);
+    if !body_loaded {
+        // La app es Windows-only; si faltara Segoe UI, egui usa su fuente por defecto.
+    }
+    ctx.set_fonts(fonts);
+}
+
+fn display_font(size: f32) -> FontId {
+    FontId::new(size, egui::FontFamily::Name("display".into()))
+}
+
+fn display(text: impl Into<String>, size: f32) -> RichText {
+    RichText::new(text).font(display_font(size)).color(INK)
+}
+
+fn tab_button(ui: &mut egui::Ui, label: &str, selected: bool, accent: Color32) -> egui::Response {
+    let response = ui.add(
+        egui::Button::new(RichText::new(label).size(13.5).color(if selected {
+            INK
+        } else {
+            MUTED
+        }))
+        .fill(Color32::TRANSPARENT)
+        .stroke(Stroke::NONE)
+        .min_size(Vec2::new(0.0, 30.0)),
+    );
+    if selected {
+        let rect = response.rect;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + 2.0, rect.bottom() - 2.0),
+                egui::pos2(rect.right() - 2.0, rect.bottom()),
+            ),
+            CornerRadius::same(2),
+            accent,
+        );
+    }
+    response
+}
+
+/// Botón de acción principal: relleno de acento y texto de contraste.
+fn primary_button(ui: &mut egui::Ui, label: &str, accent: Color32) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(label).strong().color(ON_ACCENT))
+            .fill(accent)
+            .corner_radius(CornerRadius::same(10))
+            .stroke(Stroke::NONE)
+            .min_size(Vec2::new(0.0, 38.0)),
+    )
+}
+
+fn backend_switch(
+    ui: &mut egui::Ui,
+    current: Backend,
+    has_local: bool,
+    has_cloud: bool,
+) -> Option<Backend> {
+    let mut chosen = None;
+    egui::Frame::new()
+        .fill(SURFACE_SOFT)
+        .corner_radius(CornerRadius::same(9))
+        .inner_margin(Margin::symmetric(3, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (backend, label, available) in [
+                    (Backend::Local, "Casa", has_local),
+                    (Backend::Cloud, "Cloud", has_cloud),
+                ] {
+                    if !available {
+                        continue;
+                    }
+                    let selected = current == backend;
+                    if ui
+                        .add_sized(
+                            [58.0, 24.0],
+                            egui::Button::new(RichText::new(label).size(12.0).color(if selected {
+                                INK
+                            } else {
+                                MUTED
+                            }))
+                            .fill(if selected {
+                                SURFACE
+                            } else {
+                                Color32::TRANSPARENT
+                            })
+                            .stroke(Stroke::NONE)
+                            .corner_radius(CornerRadius::same(7)),
+                        )
+                        .clicked()
+                    {
+                        chosen = Some(backend);
+                    }
+                }
+            });
+        });
+    chosen
 }
 
 fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
-        .corner_radius(CornerRadius::same(14))
-        .shadow(egui::epaint::Shadow {
-            offset: [0, 2],
-            blur: 14,
-            spread: 0,
-            color: Color32::from_black_alpha(10),
-        })
-        .inner_margin(Margin::same(20))
+        .corner_radius(CornerRadius::same(16))
+        .inner_margin(Margin::same(18))
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.with_layout(Layout::top_down(Align::Min), add_contents);
         });
 }
 
 fn text_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
-    ui.horizontal(|ui| {
-        ui.add_sized([170.0, 28.0], egui::Label::new(label));
-        ui.add(
-            egui::TextEdit::singleline(value)
-                .hint_text(hint)
-                .desired_width(270.0),
+    ui.vertical(|ui| {
+        ui.label(label);
+        ui.add_sized(
+            [ui.available_width(), 36.0],
+            egui::TextEdit::singleline(value).hint_text(hint),
         );
     });
 }
 
 fn secret_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
-    ui.horizontal(|ui| {
-        ui.add_sized([170.0, 28.0], egui::Label::new(label));
-        ui.add(
-            egui::TextEdit::singleline(value)
-                .password(true)
-                .desired_width(270.0),
+    ui.vertical(|ui| {
+        ui.label(label);
+        ui.add_sized(
+            [ui.available_width(), 36.0],
+            egui::TextEdit::singleline(value).password(true),
         );
     });
+}
+
+fn hero_stat(ui: &mut egui::Ui, label: &str, value: &str, accent: Color32) {
+    ui.vertical(|ui| {
+        ui.label(RichText::new(label).size(11.5).color(MUTED));
+        ui.add_space(1.0);
+        ui.label(
+            RichText::new(value)
+                .size(15.0)
+                .strong()
+                .color(if value == "—" { MUTED } else { accent }),
+        );
+    });
+}
+
+fn status_dot(ui: &mut egui::Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+    ui.painter().circle_filled(rect.center(), 3.6, color);
 }
 
 fn paint_signal(ui: &mut egui::Ui, rssi: Option<i8>) {
@@ -2229,118 +2552,6 @@ fn paint_signal(ui: &mut egui::Ui, rssi: Option<i8>) {
     response.on_hover_text(format!("Señal Wi-Fi: {rssi} dBm"));
 }
 
-fn paint_bulb(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    pilot: Option<Pilot>,
-    animate: bool,
-    time: f64,
-    visual: [f32; 3],
-) {
-    let scale = (rect.height() / 205.0).clamp(1.0, 1.7);
-    let center = rect.center() + egui::vec2(0.0, -4.0 * scale);
-    let on = pilot.is_some_and(|pilot| pilot.state);
-    let pulse = if on && animate {
-        (time as f32 * 0.9).sin() * 0.5 + 0.5
-    } else {
-        0.0
-    };
-    let glow = rgb(
-        (visual[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-        (visual[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-        (visual[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-    );
-    let lit = mix(glow, rgb(255, 250, 235), 0.45);
-    let dimming = pilot
-        .and_then(|pilot| pilot.dimming)
-        .unwrap_or(100)
-        .min(100) as f32
-        / 100.0;
-    if on && animate {
-        for layer in (0..6).rev() {
-            let radius = (43.0 + layer as f32 * 14.0 + pulse * 5.0) * scale;
-            let alpha = ((5 + (5 - layer) as u8 * 4) as f32
-                * (0.35 + 0.65 * dimming)
-                * (0.85 + 0.3 * pulse)) as u8;
-            painter.circle_filled(
-                center,
-                radius,
-                Color32::from_rgba_unmultiplied(glow.r(), glow.g(), glow.b(), alpha),
-            );
-        }
-        // Chispas flotando: posición determinista a partir del tiempo.
-        for spark in 0..10 {
-            let phase = (time as f32 * 0.22 + spark as f32 * 0.37).fract();
-            let angle = spark as f32 * 2.399 + time as f32 * 0.18;
-            let radius = (34.0 + spark as f32 * 3.0 + phase * 26.0) * scale;
-            let position = center
-                + egui::vec2(
-                    angle.cos() * radius,
-                    angle.sin() * radius * 0.7 - (14.0 + phase * 34.0) * scale,
-                );
-            let alpha = ((1.0 - phase) * 90.0 * (0.3 + 0.7 * dimming)) as u8;
-            painter.circle_filled(
-                position,
-                (1.1 + phase * 1.4) * scale,
-                Color32::from_rgba_unmultiplied(glow.r(), glow.g(), glow.b(), alpha),
-            );
-        }
-    }
-    let fill = if on { lit } else { SURFACE_SOFT };
-    let edge = if on { ACCENT_DARK } else { BORDER_STRONG };
-    let breathe = 1.0 + pulse * 0.012;
-    let glass = center + egui::vec2(0.0, -14.0 * scale);
-    painter.circle_filled(glass, 41.0 * scale * breathe, fill);
-    painter.circle_stroke(glass, 41.0 * scale * breathe, Stroke::new(1.0, edge));
-    painter.circle_filled(
-        glass + egui::vec2(-13.0, -15.0) * scale,
-        8.0 * scale,
-        Color32::from_white_alpha(if on { 70 } else { 45 }),
-    );
-    painter.rect_filled(
-        egui::Rect::from_center_size(
-            center + egui::vec2(0.0, 26.0 * scale),
-            Vec2::new(24.0 * scale, 31.0 * scale),
-        ),
-        CornerRadius::same((5.0 * scale).round() as u8),
-        fill,
-    );
-    for line in 0..3 {
-        painter.line_segment(
-            [
-                center + egui::vec2(-12.0 * scale, (34.0 + line as f32 * 6.0) * scale),
-                center + egui::vec2(12.0 * scale, (34.0 + line as f32 * 6.0) * scale),
-            ],
-            Stroke::new(2.0 * scale, edge),
-        );
-    }
-    if on {
-        let spin = if animate { time as f32 * 0.25 } else { 0.0 };
-        let length = 58.0 + pulse * 4.0;
-        for ray in 0..8 {
-            let angle = std::f32::consts::TAU * ray as f32 / 8.0 + spin;
-            let start = center
-                + egui::vec2(
-                    angle.cos() * 49.0 * scale,
-                    angle.sin() * 49.0 * scale - 14.0 * scale,
-                );
-            let end = center
-                + egui::vec2(
-                    angle.cos() * length * scale,
-                    angle.sin() * length * scale - 14.0 * scale,
-                );
-            painter.line_segment([start, end], Stroke::new(1.5 * scale, glow));
-        }
-    }
-    painter.text(
-        egui::pos2(center.x, rect.bottom() - 7.0),
-        egui::Align2::CENTER_BOTTOM,
-        if on { "EN LÍNEA" } else { "EN ESPERA" },
-        egui::FontId::proportional(10.0),
-        MUTED,
-    );
-}
-
 fn scene_card(
     ui: &mut egui::Ui,
     name: &str,
@@ -2348,43 +2559,204 @@ fn scene_card(
     active: bool,
     width: f32,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 50.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 54.0), Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let fill = if active {
-        mix(color, ACCENT_PALE, 0.78)
-    } else if response.hovered() {
-        mix(color, SURFACE, 0.9)
-    } else {
-        SURFACE_SOFT
-    };
-    let stroke = if active {
-        Stroke::new(1.5, color)
-    } else if response.hovered() {
-        Stroke::new(1.0, BORDER_STRONG)
-    } else {
-        Stroke::new(1.0, BORDER)
-    };
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(response.id, response.hovered(), 0.12);
+    let swatch = egui::Rect::from_min_size(rect.min, Vec2::new(width, 34.0));
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(10), fill);
-    painter.rect_stroke(rect, CornerRadius::same(10), stroke, StrokeKind::Inside);
-    painter.circle_filled(egui::pos2(rect.left() + 18.0, rect.center().y), 5.0, color);
-    painter.text(
-        egui::pos2(rect.left() + 32.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        name,
-        FontId::proportional(13.0),
-        INK,
+    painter.rect_filled(swatch, CornerRadius::same(10), mix(color, INK, 0.10));
+    painter.rect_filled(
+        egui::Rect::from_min_size(swatch.min + Vec2::new(0.0, 10.0), Vec2::new(width, 24.0)),
+        CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 10,
+            se: 10,
+        },
+        rgba(Color32::BLACK, 46),
     );
     if active {
-        painter.text(
-            egui::pos2(rect.right() - 12.0, rect.center().y),
-            Align2::RIGHT_CENTER,
-            "ACTIVA",
-            FontId::proportional(9.0),
-            color,
+        painter.rect_stroke(
+            swatch,
+            CornerRadius::same(10),
+            Stroke::new(2.0, INK),
+            StrokeKind::Inside,
         );
     }
+    let label = egui::pos2(swatch.left(), swatch.bottom() + 11.0);
+    painter.text(
+        label,
+        Align2::LEFT_CENTER,
+        name,
+        FontId::proportional(11.5),
+        if active {
+            INK
+        } else {
+            mix(MUTED, INK, 0.2 + hover * 0.45)
+        },
+    );
+    if active {
+        painter.circle_filled(egui::pos2(swatch.right() - 6.0, label.y), 3.0, color);
+    }
     response
+}
+
+fn paint_bulb(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    radius: f32,
+    halo: f32,
+    color: Color32,
+    on: bool,
+    pulse: f32,
+    brightness: f32,
+    timer: Option<f32>,
+) {
+    let center = egui::pos2(rect.center().x, rect.top() + halo + radius);
+    let metal = if on {
+        mix(color, INK, 0.68)
+    } else {
+        Color32::from_rgb(72, 72, 82)
+    };
+
+    if on {
+        let layers = ((halo / 2.5).round() as usize).max(4);
+        for layer in (1..=layers).rev() {
+            let spread = radius + halo * layer as f32 / layers as f32;
+            painter.circle_filled(
+                center,
+                spread,
+                rgba(color, (4.0 * pulse * brightness) as u8),
+            );
+        }
+    }
+
+    let neck_width = radius * 0.70;
+    let neck = egui::Rect::from_center_size(
+        egui::pos2(center.x, center.y + radius * 0.80),
+        Vec2::new(neck_width, radius * 0.58),
+    );
+    painter.rect_filled(neck, 4, metal);
+    let base_y = neck.bottom() + 3.0;
+    for row in 0..3 {
+        let width = neck_width * (0.96 - row as f32 * 0.15);
+        painter.line_segment(
+            [
+                egui::pos2(center.x - width / 2.0, base_y + row as f32 * 5.0),
+                egui::pos2(center.x + width / 2.0, base_y + row as f32 * 5.0),
+            ],
+            Stroke::new(2.4, mix(metal, INK, 0.30)),
+        );
+    }
+    painter.circle_filled(egui::pos2(center.x, base_y + 14.0), 4.2, metal);
+
+    painter.circle_filled(
+        center,
+        radius,
+        if on {
+            mix(color, INK, 0.10)
+        } else {
+            Color32::from_rgb(44, 44, 52)
+        },
+    );
+    if on {
+        // Núcleo caliente: el vidrio se aclara hacia el centro.
+        painter.circle_filled(center, radius * 0.76, mix(color, INK, 0.22));
+        painter.circle_filled(center, radius * 0.50, mix(color, INK, 0.42));
+        painter.circle_filled(center, radius * 0.24, mix(color, INK, 0.62));
+        painter.circle_filled(
+            egui::pos2(center.x - radius * 0.34, center.y - radius * 0.38),
+            radius * 0.16,
+            rgba(INK, 34),
+        );
+        // Filamento: el bucle de una bombilla incandescente.
+        let filament = egui::pos2(center.x, center.y + radius * 0.22);
+        let loop_radius = radius * 0.15;
+        let loop_points: Vec<egui::Pos2> = (0..=16)
+            .map(|step| {
+                let angle = step as f32 / 16.0 * std::f32::consts::PI;
+                egui::pos2(
+                    filament.x - angle.cos() * loop_radius,
+                    filament.y - angle.sin() * loop_radius * 1.2,
+                )
+            })
+            .collect();
+        painter.add(egui::Shape::line(
+            loop_points,
+            Stroke::new(2.4, rgba(INK, 245)),
+        ));
+    } else {
+        painter.circle_stroke(center, radius, Stroke::new(1.2, BORDER_STRONG));
+    }
+
+    // Charco de luz sobre la mesa: capas elípticas que acumulan un degradado suave.
+    if on {
+        let pool_y = rect.bottom() - 6.0;
+        for layer in 0..5 {
+            let t = 1.0 - layer as f32 / 5.0;
+            let spread = radius * (0.55 + t * 1.15);
+            let pool: Vec<egui::Pos2> = (0..30)
+                .map(|index| {
+                    let angle = index as f32 / 30.0 * std::f32::consts::TAU;
+                    egui::pos2(
+                        center.x + angle.cos() * spread,
+                        pool_y + angle.sin() * spread * 0.20,
+                    )
+                })
+                .collect();
+            painter.add(egui::Shape::convex_polygon(
+                pool,
+                rgba(color, (13.0 * pulse * brightness) as u8),
+                Stroke::NONE,
+            ));
+        }
+    }
+
+    // Anillo del apagado programado.
+    if let Some(fraction) = timer {
+        let ring = radius * 1.32;
+        let start = -std::f32::consts::FRAC_PI_2;
+        let end = start + fraction * std::f32::consts::TAU;
+        let arc: Vec<egui::Pos2> = (0..=48)
+            .map(|step| {
+                let angle = start + (end - start) * step as f32 / 48.0;
+                egui::pos2(center.x + angle.cos() * ring, center.y + angle.sin() * ring)
+            })
+            .collect();
+        painter.add(egui::Shape::line(arc, Stroke::new(2.0, rgba(INK, 130))));
+    }
+}
+
+// WiZ reports the scene, not its instantaneous RGB animation; this is a representative preview.
+fn preview_light_color(pilot: Option<Pilot>, time: f32, animate: bool) -> Color32 {
+    let Some(pilot) = pilot.filter(|pilot| pilot.state) else {
+        return SURFACE_SOFT;
+    };
+    if let Some(scene) = pilot.scene_id.filter(|scene| *scene != 0) {
+        let base = scene_color(scene);
+        if animate && matches!(scene, 1..=10 | 17..=28) {
+            let next = match scene {
+                1 | 23 => rgb(65, 200, 174),
+                5 | 6 | 22 => rgb(250, 180, 60),
+                7 | 24 | 25 => rgb(166, 206, 70),
+                3 | 9 | 10 => rgb(207, 84, 113),
+                _ => scene_color(1 + ((time / 3.0) as u16 % 8)),
+            };
+            return mix(base, next, 0.5 + 0.5 * (time * 0.7).sin());
+        }
+        return base;
+    }
+    if let Some((red, green, blue)) = pilot.color {
+        return rgb(red, green, blue);
+    }
+    let temperature = f32::from(pilot.temp.unwrap_or(4000));
+    mix(
+        rgb(255, 180, 95),
+        rgb(190, 220, 255),
+        (temperature - 2200.0) / 4300.0,
+    )
 }
 
 fn scene_color(scene_id: u16) -> Color32 {
@@ -2473,6 +2845,36 @@ mod tests {
         DailyRoutine, FAVORITE_SCENES, Preferences, RoutineAction, SCENES, daily_routine_from_json,
         preferences_from_json, preferences_json, routine_action_due, scene_at,
     };
+
+    #[test]
+    fn light_preview_tracks_color_scene_and_reduced_motion() {
+        let mut pilot = wiz_tray::Pilot {
+            state: true,
+            scene_id: None,
+            temp: None,
+            dimming: Some(65),
+            color: Some((20, 80, 160)),
+            rssi: None,
+        };
+        assert_eq!(
+            super::preview_light_color(Some(pilot), 0.0, true),
+            super::rgb(20, 80, 160)
+        );
+        pilot.scene_id = Some(1);
+        assert_ne!(
+            super::preview_light_color(Some(pilot), 0.0, true),
+            super::preview_light_color(Some(pilot), 2.0, true)
+        );
+        assert_eq!(
+            super::preview_light_color(Some(pilot), 0.0, false),
+            super::preview_light_color(Some(pilot), 2.0, false)
+        );
+        pilot.state = false;
+        assert_eq!(
+            super::preview_light_color(Some(pilot), 0.0, true),
+            super::SURFACE_SOFT
+        );
+    }
 
     #[test]
     fn scene_catalog_keeps_favorites_and_optional_modes() {
@@ -2598,6 +3000,10 @@ fn display_mac(mac: &str) -> String {
         .collect::<Vec<_>>()
         .join(":")
         .to_uppercase()
+}
+
+fn rgba(color: Color32, alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }
 
 fn rgb(red: u8, green: u8, blue: u8) -> Color32 {
@@ -3046,7 +3452,7 @@ pub fn run() -> Result<(), String> {
         viewport: egui::ViewportBuilder::default()
             .with_title("WiZ Tray")
             .with_inner_size([1120.0, 760.0])
-            .with_min_inner_size([860.0, 620.0])
+            .with_min_inner_size([520.0, 580.0])
             .with_icon(std::sync::Arc::new(egui::IconData {
                 rgba: make_icon_rgba(false),
                 width: 32,

@@ -8,7 +8,9 @@ if (-not (Test-Path -LiteralPath $linker)) { throw 'No encuentro WinLibs GCC. In
 
 $env:Path = "$bin;$env:USERPROFILE\.cargo\bin;$env:Path"
 $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = $linker
-$env:RUSTFLAGS = '-C target-feature=+crt-static'
+# Los flags van por target: con RUSTFLAGS global cargo los aplica tambien a los
+# proc-macro del host y la compilacion de las pruebas falla.
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = '-C target-feature=+crt-static'
 $cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
 $target = 'x86_64-pc-windows-gnu'
 $distDir = Join-Path $projectRoot 'dist'
@@ -20,13 +22,25 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'cargo fmt encontró formato pendiente.' }
     & $cargo test --target $target
     if ($LASTEXITCODE -ne 0) { throw 'Fallaron las pruebas de WiZ Tray.' }
-    & $cargo build --release --target $target
-    if ($LASTEXITCODE -ne 0) { throw 'No se pudo compilar WiZ Tray.' }
 
-    $exe = Join-Path $projectRoot "target\$target\release\wiz-tray.exe"
-    $output = Join-Path $distDir 'WiZ Tray.exe'
-    Copy-Item -LiteralPath $exe -Destination $output -Force
-    Write-Output "Ejecutable listo: $output"
+    Push-Location (Join-Path $projectRoot 'src-tauri')
+    try {
+        & $cargo fmt -- --check
+        if ($LASTEXITCODE -ne 0) { throw 'cargo fmt encontró formato pendiente en la app.' }
+        & $cargo test --target $target
+        if ($LASTEXITCODE -ne 0) { throw 'Fallaron las pruebas de la interfaz.' }
+        & $cargo build --release --target $target
+        if ($LASTEXITCODE -ne 0) { throw 'No se pudo compilar WiZ Tray.' }
+
+        $release = Join-Path $projectRoot "src-tauri\target\$target\release"
+        Copy-Item -LiteralPath (Join-Path $release 'wiz-tray-app.exe') -Destination (Join-Path $distDir 'WiZ Tray.exe') -Force
+        Copy-Item -LiteralPath (Join-Path $release 'WebView2Loader.dll') -Destination $distDir -Force
+    }
+    finally {
+        Pop-Location
+    }
+
+    Write-Output "Ejecutable listo: $(Join-Path $distDir 'WiZ Tray.exe')"
 }
 finally {
     Pop-Location

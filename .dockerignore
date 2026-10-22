@@ -1,5 +1,6 @@
 .git
+**/target
 dist
-target
+**/node_modules
 wiz-home.json
 wiz-tray.json

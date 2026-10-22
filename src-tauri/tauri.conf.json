@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WiZ Tray",
+  "version": "0.1.0",
+  "identifier": "com.wiztray.app",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "WiZ Tray",
+        "width": 820,
+        "height": 700,
+        "minWidth": 420,
+        "minHeight": 460,
+        "resizable": true,
+        "center": true,
+        "visible": false,
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": [],
+    "icon": ["icons/icon.ico"]
+  }
+}

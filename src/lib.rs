@@ -7,11 +7,14 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
 #[cfg(windows)]
 mod cloud_auth;
+
+pub mod state;
 
 const DEVICE_PORT: u16 = 38899;
 const WIZ_APP_VERSION: &str = "1.38.6";
@@ -28,7 +31,7 @@ pub struct LightConfig {
     pub white_range: Option<(u16, u16)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportDevice {
     pub name: String,
     pub mac: String,
@@ -54,7 +57,7 @@ pub struct CloudOAuthConfig {
     pub wiz_client_secret: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DiscoveredLight {
     pub ip: Ipv4Addr,
     pub mac: String,
@@ -63,7 +66,7 @@ pub struct DiscoveredLight {
     pub rssi: Option<i8>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Pilot {
     pub state: bool,
     pub scene_id: Option<u16>,

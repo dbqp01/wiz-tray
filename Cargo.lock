@@ -3018,6 +3018,7 @@ dependencies = [
  "eframe",
  "hmac",
  "rfd",
+ "serde",
  "serde_json",
  "sha2",
  "tray-icon",

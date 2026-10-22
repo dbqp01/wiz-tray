@@ -21,7 +21,8 @@ Lee primero `README.md` y `git status --short`. Conserva los cambios existentes 
 ## Cambios y verificación
 
 - Antes de editar, revisa `Cargo.toml`, `Cargo.lock`, `build.ps1`, `compose.yaml` y los llamadores afectados. Mantén el cambio pequeño y no reviertas ediciones previas.
-- `src/windows_app.rs` implementa el dashboard, los formularios de configuración y la bandeja. Guarda preferencias sin secretos en `%LOCALAPPDATA%\WiZ Tray\settings.json`. `src/lib.rs` implementa validación y comandos locales/cloud. `src/cloud_auth.rs` maneja Google OAuth, el intercambio WiZ y el almacenamiento DPAPI.
+- La interfaz vive en `ui/` (HTML, CSS y JavaScript planos, sin npm ni bundler) y la app de escritorio en `src-tauri/` (Tauri v2): `src-tauri/src/appstate.rs` traduce el estado a la interfaz y expone los comandos; `src-tauri/src/main.rs` crea la bandeja, la ventana y el hilo de sondeo. `src/lib.rs` implementa validación y comandos locales/cloud. `src/cloud_auth.rs` maneja Google OAuth, el intercambio WiZ y el almacenamiento DPAPI. Las preferencias sin secretos se guardan en `%LOCALAPPDATA%\WiZ Tray\settings.json`.
+- La interfaz se compila dentro del `.exe`: si tocas `ui/`, hay que recompilar (`build.ps1` o `cargo build` en `src-tauri/`) para ver el cambio.
 - Mantén fuera de Git `wiz-tray.json`, `wiz-home.json`, tokens, credenciales OAuth, claves y ejecutables. Revisa `.gitignore` antes de preparar un commit; nunca incluyas valores de secretos en mensajes, logs o pruebas.
 - El flujo reproducible de Docker es `docker compose run --build --rm build`: comprueba el código con pruebas simuladas y compila el `.exe`. En Windows, `build.ps1` comprueba formato, ejecuta pruebas y compila el release. Distingue siempre estas comprobaciones de una prueba real con WiZ Cloud o una bombilla física.
 - Al reportar el resultado, indica qué se probó realmente y qué depende de la red, credenciales OAuth o hardware del usuario.

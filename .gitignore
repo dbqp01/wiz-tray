@@ -1,4 +1,6 @@
 /target/
+/src-tauri/target/
+/src-tauri/gen/schemas/
 /dist/
 /wiz-tray.json
 /wiz-home.json
@@ -18,3 +20,9 @@
 *.p12
 *.pfx
 *.key
+
+# Herramientas locales de desarrollo
+/.claude/
+/.playwright-mcp/
+/.taste-skill/
+/ui-preview.jpg
