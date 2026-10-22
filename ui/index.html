@@ -215,14 +215,22 @@
               <span class="chip chip--quiet" id="localState">Sin configurar</span>
             </div>
             <p class="note note--block">
-              El archivo de exportación de la app WiZ se lee en este equipo y nunca sale de él.
+              Directo por tu red Wi-Fi, sin cuenta ni internet. Busca el foco y queda listo.
             </p>
+            <div class="actions actions--split">
+              <span class="note" id="discoveryNote">Busca focos WiZ en tu red.</span>
+              <button class="btn btn--primary" id="discoverBtn">Buscar en mi red</button>
+            </div>
+            <ul class="found" id="foundList"></ul>
+
+            <h4 class="card__label">O configúralo a mano</h4>
             <div class="field">
-              <label class="field__label" for="localExport">Export de WiZ</label>
+              <label class="field__label" for="localExport">Export de WiZ (opcional, para firmar)</label>
               <div class="field__row">
                 <input id="localExport" class="input" type="text" placeholder="wiz-home.json" />
                 <button class="btn" id="pickExportBtn">Elegir archivo</button>
               </div>
+              <span class="note">Se lee en este equipo y nunca sale de él.</span>
             </div>
             <div class="fields">
               <div class="field">
@@ -238,14 +246,9 @@
               <label class="field__label" for="deviceNameInput">Nombre del foco</label>
               <div class="field__row">
                 <input id="deviceNameInput" class="input" type="text" placeholder="Luz de Dormitorio" />
-                <button class="btn btn--primary" id="saveLocalBtn">Guardar</button>
+                <button class="btn" id="saveLocalBtn">Guardar</button>
               </div>
             </div>
-            <div class="actions actions--split">
-              <span class="note" id="discoveryNote">Busca focos WiZ en tu red.</span>
-              <button class="btn" id="discoverBtn">Buscar en mi red</button>
-            </div>
-            <ul class="found" id="foundList"></ul>
           </div>
 
           <div class="card">
@@ -254,8 +257,8 @@
               <span class="chip chip--quiet" id="cloudState">Sin credenciales</span>
             </div>
             <p class="note note--block">
-              Las credenciales OAuth de la app WiZ no vienen de Google: son las de la propia app WiZ.
-              Se guardan cifradas con DPAPI en tu perfil de Windows.
+              Control remoto fuera de casa. Usa las credenciales OAuth de la propia app WiZ (no las
+              de Google), que se guardan cifradas con DPAPI en tu perfil de Windows.
             </p>
             <div class="fields">
               <div class="field">

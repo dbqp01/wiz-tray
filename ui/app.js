@@ -368,16 +368,22 @@ function renderTimer() {
 
 /* ---------- acciones ---------- */
 
-async function run(command, args) {
+async function invoke(command, args) {
   if (!bridge) return null;
   try {
-    const snapshot = await bridge.invoke(command, args);
-    if (snapshot) render(snapshot);
-    return snapshot;
+    return await bridge.invoke(command, args);
   } catch (error) {
     $("errorText").textContent = String(error);
     return null;
   }
+}
+
+/* run() solo para comandos que devuelven un Snapshot: renderizar una lista
+   (discover, load_export) deja la interfaz sin estado. */
+async function run(command, args) {
+  const snapshot = await invoke(command, args);
+  if (snapshot) render(snapshot);
+  return snapshot;
 }
 
 async function perform(kind, value) {
@@ -493,10 +499,10 @@ on("backendSwitch", "click", (event) => {
 });
 
 on("pickExportBtn", "click", async () => {
-  const path = await run("pick_export");
+  const path = await invoke("pick_export");
   if (path) {
     $("localExport").value = path;
-    const devices = await run("load_export", { path });
+    const devices = await invoke("load_export", { path });
     if (devices?.length) {
       const device = devices[0];
       $("localMac").value = device.mac;
@@ -512,7 +518,7 @@ on("pickExportBtn", "click", async () => {
 
 on("discoverBtn", "click", async () => {
   $("discoveryNote").textContent = "Buscando focos WiZ en tu red…";
-  const lights = await run("discover");
+  const lights = await invoke("discover");
   const list = $("foundList");
   list.replaceChildren();
   if (!lights) return;
@@ -525,9 +531,16 @@ on("discoverBtn", "click", async () => {
     label.textContent = `${light.mac} · ${light.ip} · ${light.rssi ?? "?"} dBm`;
     const pick = document.createElement("button");
     pick.textContent = "Usar este foco";
+    // Plug and play: elegir un foco encontrado ya lo deja configurado.
     pick.addEventListener("click", () => {
       $("localIp").value = light.ip;
       $("localMac").value = light.mac;
+      run("save_local_setup", {
+        exportPath: $("localExport").value,
+        ip: light.ip,
+        mac: light.mac,
+        deviceName: $("deviceNameInput").value,
+      });
     });
     item.append(label, pick);
     list.append(item);
@@ -572,7 +585,9 @@ async function start() {
   if (bridge) {
     const snapshot = await bridge.invoke("snapshot");
     render(snapshot);
-    await bridge.listen("state", render);
+    // Tauri v2 entrega {event, id, payload}; el sondeo manda el Snapshot dentro.
+    const listen = bridge.event?.listen ?? bridge.listen;
+    if (listen) await listen("state", (event) => render(event?.payload ?? event));
     return;
   }
   demo();
