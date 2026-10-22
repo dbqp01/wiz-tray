@@ -85,6 +85,23 @@ function toHex([r, g, b]) {
   return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function hexToRgb(hex) {
+  const value = hex.replace("#", "");
+  return [0, 2, 4].map((offset) => parseInt(value.slice(offset, offset + 2), 16));
+}
+
+/* Pinta la interfaz sin esperar al foco: lo usan los diales y el selector. */
+function previewColor(rgb) {
+  const root = document.documentElement.style;
+  const accent = lift(rgb);
+  root.setProperty("--bulb", `rgb(${rgb.join(" ")})`);
+  root.setProperty("--bulb-hi", `rgb(${tint(rgb, 0.72).join(" ")})`);
+  root.setProperty("--accent", `rgb(${accent.join(" ")})`);
+  root.setProperty("--accent-ink", luminance(accent) > 0.55 ? "#17130a" : "#fdf6ea");
+  $("statColorHex").textContent = toHex(rgb);
+  if ($("customColor")) $("customColor").value = toHex(rgb);
+}
+
 function applyColors() {
   const pilot = state?.pilot;
   const on = Boolean(pilot?.state);
@@ -218,19 +235,26 @@ function render(snapshot) {
 function renderColors(snapshot) {
   const row = $("colorRow");
   const colors = snapshot.colors ?? [];
+  const live = toHex(liveColor());
   const signature = colors.map((color) => color.join(",")).join(";");
-  if (row.dataset.signature === signature) return;
+  if (row.dataset.signature === signature) {
+    const input = $("customColor");
+    if (input && document.activeElement !== input) input.value = live;
+    return;
+  }
   row.dataset.signature = signature;
   row.replaceChildren();
+
+  // Un hueco más para el selector libre, al final del arco.
+  const slots = colors.length + 1;
+  const angleOf = (index) => `${slots > 1 ? -78 + (156 / (slots - 1)) * index : 0}deg`;
+
   colors.forEach((color, index) => {
     const button = document.createElement("button");
     button.className = "swatch";
     button.style.setProperty("--dot", `rgb(${color.join(" ")})`);
     button.style.setProperty("--i", index);
-    button.style.setProperty(
-      "--angle",
-      `${colors.length > 1 ? -78 + (156 / (colors.length - 1)) * index : 0}deg`,
-    );
+    button.style.setProperty("--angle", angleOf(index));
     button.title = `Color ${color.join(", ")}`;
     button.setAttribute("aria-label", `Aplicar color ${toHex(color)}`);
     button.addEventListener("click", () => {
@@ -238,6 +262,27 @@ function renderColors(snapshot) {
     });
     row.append(button);
   });
+
+  const custom = document.createElement("label");
+  custom.className = "swatch swatch--custom";
+  custom.style.setProperty("--i", colors.length);
+  custom.style.setProperty("--angle", angleOf(colors.length));
+  custom.title = "Elegir cualquier color";
+
+  const input = document.createElement("input");
+  input.type = "color";
+  input.id = "customColor";
+  input.value = live;
+  input.setAttribute("aria-label", "Elegir un color personalizado");
+  input.addEventListener("input", (event) => previewColor(hexToRgb(event.target.value)));
+  input.addEventListener("change", (event) => {
+    const rgb = hexToRgb(event.target.value);
+    previewColor(rgb);
+    if (bridge) perform("color", rgb);
+  });
+
+  custom.append(input);
+  row.append(custom);
 }
 
 function setSlider(id, value, min, max) {
@@ -399,15 +444,8 @@ on("brightness", "change", (event) => perform("brightness", Number(event.target.
 
 on("temperature", "input", (event) => {
   const value = Number(event.target.value);
-  const rgb = kelvinToRgb(value);
-  const live = lift(rgb);
-  const root = document.documentElement.style;
   $("temperatureValue").textContent = `${value} K`;
-  $("statColorHex").textContent = toHex(rgb);
-  root.setProperty("--bulb", `rgb(${rgb.join(" ")})`);
-  root.setProperty("--bulb-hi", `rgb(${tint(rgb, 0.72).join(" ")})`);
-  root.setProperty("--accent", `rgb(${live.join(" ")})`);
-  root.setProperty("--accent-ink", luminance(live) > 0.55 ? "#17130a" : "#fdf6ea");
+  previewColor(kelvinToRgb(value));
 });
 
 on("temperature", "change", (event) => perform("temperature", Number(event.target.value)));
