@@ -1,52 +1,53 @@
 <div align="center">
-  <img src="docs/banner.svg" alt="WiZ Tray" width="100%">
+  <img src="docs/media/banner.png" alt="WiZ Tray" width="100%">
 
   <p>
-    <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white">
+    <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white">
+    <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white">
     <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
-    <img alt="Tauri" src="https://img.shields.io/badge/UI-Tauri%202-FFC131?logo=tauri&logoColor=white">
-    <img alt="Docker" src="https://img.shields.io/badge/build-docker%20compose-2496ED?logo=docker&logoColor=white">
+    <img alt="WebGPU" src="https://img.shields.io/badge/WebGPU-shader-005A9C">
   </p>
 
-  <p>Panel y bandeja para focos WiZ en Windows.<br>
-  Local primero; Cloud si lo necesitas.</p>
+  <p>Controla tu foco WiZ desde la bandeja de Windows.<br>
+  La ventana se ilumina con la luz real del foco.</p>
 </div>
 
----
+<br>
 
-## ✨ Qué incluye
+<p align="center">
+  <img src="docs/media/fiesta.gif" alt="La escena Fiesta en bucle" width="420">
+</p>
 
-| | |
-|---|---|
-| 💡 **Panel** | Un foquito que se enciende con el color real de tu foco: brillo, temperatura y 8 colores |
-| 🎭 **Escenas** | Seis favoritas a la vista y 28 en total, incluidas Fiesta y Halloween |
-| ⏱️ **Rutinas** | Apagado tras un intervalo o acción diaria a una hora local |
-| 🖥️ **Bandeja** | Abre el panel o enciende, apaga y pone Luz de día desde el icono |
-| 🔌 **Dos modos** | Local por Wi-Fi (UDP 38899) o WiZ Cloud; puedes guardar ambos y alternar |
+## La luz es la interfaz
 
-> [!NOTE]
-> Algunos modos dependen del modelo de foco. Las animaciones del panel se desactivan si Windows tiene las animaciones apagadas.
+Al abrir WiZ Tray ves lo que hace tu foco. Un shader WebGPU pinta la ventana con la escena activa, y cada escena tiene su paleta y su movimiento: Océano proyecta cáusticas, Chimenea sube como una llama, Romance late. Las escenas que en WiZ son fijas, como Luz de día o Luz nocturna, quedan quietas.
 
-## 🎨 La interfaz
+| | | |
+|:-:|:-:|:-:|
+| <img src="docs/media/luz-chimenea.png" alt="Escena Chimenea"> | <img src="docs/media/luz-oceano.png" alt="Escena Océano"> | <img src="docs/media/luz-dia.png" alt="Escena Luz de día"> |
+| Chimenea | Océano | Luz de día |
 
-El panel es una app web ligera dentro de una ventana de Tauri (`ui/`, sin Node ni bundler): HTML, CSS y JavaScript planos que Rust alimenta por comandos.
+- **Arrastra** sobre la luz para cambiar el brillo y **haz clic** para encender o apagar. La luz se abre desde el punto que tocaste.
+- **Brillo y Blanco** son dos líneas finas, de 1 a 100 % y de 2200 a 6500 K.
+- **8 colores rápidos** y un selector libre para cualquier otro color.
+- **Las 28 escenas** de WiZ están en recuadros con su paleta, en cuatro pestañas: Blancos, Ambiente, Color y Temporada.
+- **Desde la bandeja** puedes abrir la ventana, encender, apagar o poner Luz de día sin abrir nada.
 
-- **El foquito es la escena activa.** Toma el color, la temperatura y el brillo que lee del foco, y la ventana entera se tiñe con esa luz: azul si el foco está en Blanco frío, ámbar si está en Luz de día.
-- **Cuatro pestañas, el mismo foquito arriba:** Inicio (diales, colores y ficha del foco), Escenas, Rutinas y Conexiones.
-- **Respeta el sistema:** si Windows tiene las animaciones apagadas, la respiración del foquito y los pulsos de escena se detienen.
+## Ajustes
 
-El código de la interfaz vive en [`ui/`](ui): `index.html`, `app.css` y `app.js`. Rust expone los comandos en [`src-tauri/src/appstate.rs`](src-tauri/src/appstate.rs).
+<img src="docs/media/ajustes.png" alt="Ajustes" width="420" align="right">
 
-## 🧭 Cómo funciona
+**Conexión.** En casa, la app busca tus focos al abrirse, sin cuenta ni internet. Si el router le da otra IP al foco, lo vuelve a encontrar. Fuera de casa puedes usar WiZ Cloud.
 
-La app corre en tu equipo y habla directo con el foco o con WiZ Cloud. No hay servidor propio en medio.
+**Rutinas.** Apagado tras 15 min, 30 min, 1 h, 2 h o los minutos que elijas, y una acción diaria a una hora fija.
 
-- **Local**: comandos UDP 38899 dentro de tu red. Sin cuenta ni internet. El token de firma es opcional.
-- **Cloud**: OAuth con Google y credenciales de WiZ. La app refresca el estado cada 4 segundos en local y cada minuto en Cloud.
+La ventana usa Mica en Windows 11, sigue las transiciones de Fluent y respeta la opción de reducir animaciones de Windows.
 
-## 🚀 Instalación
+<br clear="right">
 
-Windows 10/11 de 64 bits + Docker Desktop con Compose:
+## Instalación
+
+Necesitas Windows 10 u 11 de 64 bits y Docker Desktop con Compose.
 
 ```powershell
 git clone https://github.com/dbqp01/wiz-tray.git
@@ -55,54 +56,62 @@ docker compose run --build --rm build
 .\dist\WiZ Tray.exe
 ```
 
-El build deja el ejecutable en `dist/WiZ Tray.exe`; la app no corre dentro del contenedor. Al cerrar la ventana queda en la bandeja: usa **Salir de WiZ Tray** en el menú del icono para cerrarla del todo.
+El build deja el ejecutable en `dist/WiZ Tray.exe`; la app no corre dentro del contenedor. Al cerrar la ventana, WiZ Tray sigue en la bandeja. Para cerrarla del todo, usa **Salir** en el menú del icono.
 
-## 🔧 Conexiones
-
-Abre **Conexiones** en el primer inicio y configura uno o ambos modos.
+## Conectar el foco
 
 <details>
-<summary><b>🏠 Control local</b> (recomendado en casa)</summary>
+<summary><b>En casa, por Wi-Fi</b> (recomendado)</summary>
+<br>
 
-1. En la app WiZ: **Ajustes → Seguridad → comunicación local**.
-2. En WiZ Tray: **Conexiones → Local → Buscar focos en mi red**. Escanea tu subred `/24` por UDP 38899 y muestra IP + MAC; **Usar y conectar** guarda al instante. También puedes escribir IP y MAC a mano.
-3. El **token es opcional**. Con el export `wiz-home.json` la app firma por HMAC; sin él envía JSON sin firma. Muchos firmwares domésticos lo aceptan (probado en un foco real); otros más nuevos lo rechazan y entonces hace falta el export.
-4. Equipo y foco deben estar en la misma red Wi-Fi.
+1. En la app WiZ, activa **Ajustes → Seguridad → Comunicación local**.
+2. Abre WiZ Tray. Si hay un solo foco en tu red, queda configurado solo. Si hay varios, elige uno en **Ajustes → Conexión**.
+3. El equipo y el foco deben estar en la misma red Wi-Fi.
+
+Algunos firmwares nuevos exigen comandos firmados. En ese caso, elige el export `wiz-home.json` de la app WiZ en **Ajustes → WiZ Cloud → paso 1**: la app lee la clave en tu equipo y firma los comandos.
 
 </details>
 
 <details>
-<summary><b>☁️ WiZ Cloud</b> (control remoto)</summary>
+<summary><b>Fuera de casa, con WiZ Cloud</b></summary>
+<br>
 
-1. Sigue el asistente **Foco → Acceso → Conectar**. Busca la MAC automáticamente en tu Wi-Fi y elige el foco encontrado. Si falla, abre **No aparece · Ayuda desde el móvil**. Importa un export compatible o escribe los IDs del foco y del hogar: la búsqueda local solo obtiene la MAC.
-2. Añade el Client ID de Google y las credenciales OAuth privadas de WiZ. El secreto de Google es opcional; el Client ID y el secreto de WiZ son necesarios y deben obtenerse por una vía autorizada. **Este repo no los incluye.**
-3. **Guardar Cloud** y luego **Iniciar sesión con Google**. El navegador pide `openid`, `email` y `profile`, y vuelve a la app por `127.0.0.1`.
+**Ajustes → WiZ Cloud** te guía en tres pasos que se marcan al completarse:
 
-Google autentica la cuenta; no reemplaza las credenciales de WiZ. Un clon limpio no completa Cloud hasta tener valores válidos. El equipo debe seguir encendido, con internet y WiZ Tray abierta en la bandeja.
+1. **Elige el export de la app WiZ.** Rellena el foco, el hogar, la MAC y el rango de blanco.
+2. **Guarda las credenciales OAuth de la app WiZ.** Se cifran con Windows DPAPI y no se vuelven a mostrar.
+3. **Inicia sesión con Google.** Se abre el navegador y, al volver, la app ya controla el foco.
+
+> [!IMPORTANT]
+> Este repo no incluye las credenciales OAuth de la app WiZ, y las de Google no las sustituyen. Un clon limpio no completa Cloud hasta que tengas esas credenciales por una vía autorizada. Para instalaciones profesionales existe la [API documentada de WiZ Pro](https://docs.pro.wizconnected.com/), que es otra ruta.
+
+El equipo debe seguir encendido, con internet y con WiZ Tray en la bandeja.
 
 </details>
 
-## 🩺 Problemas comunes
+## Si algo falla
 
 | Síntoma | Qué probar |
 |---|---|
-| La búsqueda no encuentra el foco | Confirma que ambos están en la misma Wi-Fi, revisa el firewall para UDP 38899 y escribe IP + MAC a mano |
-| El foco ignora los comandos | Su firmware exige firma: importa `wiz-home.json` en **Conexiones → Local** |
+| No encuentra el foco | Comprueba que ambos están en la misma Wi-Fi y que el firewall permite UDP 38899. También puedes escribir IP y MAC en **Ajustes → Configurar a mano** |
+| El foco ignora los comandos | Su firmware exige firma: elige `wiz-home.json` en **Ajustes → WiZ Cloud → paso 1** |
 | `redirect_uri_mismatch` al iniciar sesión | El cliente OAuth de Google debe ser de tipo **App de escritorio** |
-| `invalid_client` | Client ID o secreto incorrectos; vuelve a guardarlos |
+| `invalid_client` | Client ID o secreto incorrectos: vuelve a guardarlos |
 | `access_denied` | Añade tu cuenta como usuario de prueba en la pantalla de consentimiento |
-| Cloud muestra estado viejo | La app consulta cada minuto; verifica la sesión y que el equipo no esté suspendido |
+| Cloud muestra un estado viejo | Cloud se consulta cada minuto; revisa la sesión y que el equipo no esté suspendido |
+| La luz no se mueve | Sin WebGPU la app usa un degradado fijo. Revisa los controladores de vídeo o la opción de reducir animaciones de Windows |
 
-## 🔒 Privacidad
+## Privacidad
 
-- El export `wiz-home.json` contiene una clave privada de control. WiZ Tray guarda **solo su ruta** y lee la clave en local al arrancar.
-- Credenciales OAuth y refresh token se cifran con **Windows DPAPI** en tu perfil.
-- Nada se sube al repositorio ni se escribe en logs. No pegues secretos en el chat ni en issues.
+- La app habla directamente con el foco o con WiZ Cloud, sin servidores intermedios.
+- El export `wiz-home.json` contiene una clave privada. WiZ Tray guarda solo la ruta y lee la clave en tu equipo.
+- Las credenciales OAuth y el refresh token se cifran con **Windows DPAPI** en tu perfil.
+- Nada de eso se sube al repositorio ni se escribe en logs. No pegues secretos en issues ni en chats.
 
-## 🛠️ Desarrollo
+## Desarrollo
 
 ```powershell
-# Reproducible con Docker
+# Reproducible con Docker: pruebas contra un foco simulado y .exe de Windows
 docker compose run --build --rm build
 
 # En Windows, con Rust estable, rustfmt y WinLibs POSIX UCRT
@@ -110,19 +119,25 @@ rustup target add x86_64-pc-windows-gnu
 rustup component add rustfmt
 .\build.ps1
 
-# La app en caliente (interfaz + backend reales)
+# La app con interfaz y backend reales
 cd src-tauri
 cargo run
 ```
 
-El flujo de Docker prueba el protocolo contra un foco simulado y compila el `.exe` de Windows; `build.ps1` añade las pruebas de la interfaz y deja el ejecutable en `dist\`. Ninguno de los dos verifica una bombilla física, el login real de WiZ Cloud ni una cuenta de Google.
+| Ruta | Qué hay |
+|---|---|
+| [`ui/`](ui) | La interfaz: HTML, CSS y JavaScript planos, sin npm ni bundler |
+| [`ui/light.js`](ui/light.js) | El shader WebGPU con las paletas y los bucles de las 28 escenas |
+| [`src-tauri/`](src-tauri) | La app Tauri 2: bandeja, ventana, sondeo del foco y comandos |
+| [`src/`](src) | El núcleo: protocolo local, WiZ Cloud, OAuth y DPAPI |
+| [`docs/design-previews/`](docs/design-previews) | Maquetas del rediseño y el prototipo WebGPU |
 
-La interfaz se compila dentro del `.exe`: si tocas `ui/`, hay que volver a compilar para ver el cambio.
+La interfaz se compila dentro del `.exe`: si tocas `ui/`, vuelve a compilar para ver el cambio. Puedes abrir `ui/index.html` en un navegador para revisar el diseño en modo demo.
 
-Antes de tocar código, lee [AGENTS.md](AGENTS.md): setup, secretos y límites de verificación.
+Ninguno de los dos builds prueba una bombilla física, el login real de WiZ Cloud ni una cuenta de Google. Antes de tocar código, lee [AGENTS.md](AGENTS.md).
 
 ---
 
 <div align="center">
-  <sub>WiZ Tray no está afiliado a WiZ. Para instalaciones Pro existe la <a href="https://docs.pro.wizconnected.com/">API documentada de WiZ Pro</a>, distinta de la API doméstica usada aquí.</sub>
+  <sub>WiZ Tray no está afiliado a WiZ ni a Signify.</sub>
 </div>

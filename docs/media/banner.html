@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<style>
+  /* Fuente del banner del README: la luz real del shader con el título encima. */
+  html, body { margin: 0; width: 1280px; height: 400px; overflow: hidden; background: #0c0b0a; }
+  .b { position: relative; width: 1280px; height: 400px; background: url(banner-light.png) center / cover; color: #fff;
+       font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; }
+  .b::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(10 6 14 / .55), transparent 62%); }
+  .t { position: absolute; z-index: 1; left: 88px; top: 50%; transform: translateY(-50%); }
+  h1 { margin: 0; font-size: 104px; line-height: 1; font-weight: 200; letter-spacing: -.045em; }
+  p { margin: 18px 0 0 4px; font: 300 24px/32px "Segoe UI Variable Text", "Segoe UI", sans-serif; color: rgb(255 255 255 / .78); }
+</style>
+</head>
+<body>
+  <div class="b"><div class="t"><h1>WiZ Tray</h1><p>Tu foco WiZ, desde la bandeja de Windows.</p></div></div>
+</body>
+</html>
