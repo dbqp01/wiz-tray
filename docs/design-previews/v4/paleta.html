@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><link rel="stylesheet" href="base.css">
+<style>
+  /* Paleta: las escenas son el producto; cada una es un campo de su color real, la actual se abre grande. */
+  body { background: #161616; }
+  .titlebar .glyph { background: #ff7e9a; box-shadow: 0 0 10px #ff7e9a; }
+  main { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 14px; padding: 6px 20px 20px; min-height: 0; }
+  .head { display: flex; align-items: center; gap: 16px; }
+  .head h1 { margin: 0; font-size: 22px; line-height: 28px; font-weight: 600; }
+  .head p { margin: 0; color: rgba(255, 255, 255, .55); font-size: 12px; }
+  .slider { flex: 1; display: flex; align-items: center; gap: 12px; margin-left: 24px; color: rgba(255, 255, 255, .75); }
+  .slider .tr { flex: 1; position: relative; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #ff9fb5 70%, rgba(255, 255, 255, .5) 70%); }
+  .slider .tr::after { content: ""; position: absolute; left: 70%; top: -8px; margin-left: -10px; width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle, #ff9fb5 0 5px, #454545 5.5px); }
+  .pw { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: #ff9fb5; color: #3a0d18; }
+  .seg { display: flex; gap: 4px; }
+  .seg span { padding: 6px 14px; border-radius: 16px; color: rgba(255, 255, 255, .7); }
+  .seg span.on { background: rgba(255, 255, 255, .1); color: #fff; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; gap: 10px; min-height: 0; }
+  .t { position: relative; border-radius: 12px; overflow: hidden; background: var(--g); padding: 12px 14px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .t::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, rgba(0, 0, 0, .35)); }
+  .t b { position: relative; z-index: 1; font-weight: 600; font-size: 14px; text-shadow: 0 1px 8px rgba(0, 0, 0, .25); }
+  .t small { position: relative; z-index: 1; font-size: 12px; opacity: .75; }
+  .t.big { grid-column: span 2; grid-row: span 2; padding: 20px; }
+  .t.big b { font-size: 26px; line-height: 32px; }
+  .t.big .pct { position: absolute; z-index: 1; top: 16px; left: 20px; font-size: 64px; line-height: 1; font-weight: 600; letter-spacing: -.04em; display: flex; }
+  .t.big .pct sup { font-size: 20px; margin: 6px 0 0 4px; opacity: .7; }
+  .t.big .live { position: absolute; z-index: 1; top: 20px; right: 20px; font-size: 12px; padding: 4px 10px; border-radius: 12px; background: rgba(0, 0, 0, .25); backdrop-filter: blur(10px); }
+  .t.big { box-shadow: 0 20px 50px -18px rgba(255, 100, 140, .7), 0 0 0 1px rgba(255, 255, 255, .15) inset; }
+</style></head>
+<body><div class="win">
+  <div class="titlebar"><span class="glyph"></span>WiZ Tray<div class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10"/></svg></span></div></div>
+  <main>
+    <div class="head">
+      <span class="pw"><svg class="icon" viewBox="0 0 16 16" style="width:18px;height:18px;stroke-width:1.7"><path d="M8 1.8v5.4"/><path d="M4.6 3.8a5.2 5.2 0 1 0 6.8 0"/></svg></span>
+      <div><h1 class="display">Dormitorio</h1><p>En casa · Wi-Fi</p></div>
+      <div class="slider"><svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3"/></svg><div class="tr"></div></div>
+    </div>
+    <div class="seg"><span class="on">Escenas</span><span>Blancos</span><span>Colores</span><span>Rutinas</span></div>
+    <div class="grid">
+      <div class="t big" style="--g:radial-gradient(90% 80% at 20% 10%,#ffd1dc,transparent 60%),linear-gradient(140deg,#ff7e9a,#e0406a 55%,#8a2f8c)">
+        <span class="pct display num">70<sup>%</sup></span><span class="live">En movimiento</span>
+        <b class="display">Romance</b><small>Aplicada ahora</small></div>
+      <div class="t" style="--g:linear-gradient(150deg,#fff1cf,#ffc86e)"><b style="color:#3b2706;text-shadow:none">Luz de día</b></div>
+      <div class="t" style="--g:linear-gradient(150deg,#ffcf9a,#ff9a4a)"><b>Blanco cálido</b></div>
+      <div class="t" style="--g:linear-gradient(150deg,#1e6bff,#2fd7d0)"><b>Océano</b><small>En movimiento</small></div>
+      <div class="t" style="--g:linear-gradient(150deg,#ffb15c,#ff5f6d 60%,#7d3fa0)"><b>Atardecer</b><small>En movimiento</small></div>
+      <div class="t" style="--g:linear-gradient(150deg,#6d5bff,#c86bff)"><b>Relajarse</b></div>
+      <div class="t" style="--g:linear-gradient(150deg,#ff9a3d,#b0281a)"><b>Chimenea</b><small>En movimiento</small></div>
+      <div class="t" style="--g:linear-gradient(150deg,#2fb36d,#0f5c46)"><b>Bosque</b><small>En movimiento</small></div>
+      <div class="t" style="--g:linear-gradient(150deg,#2a3790,#120f3a)"><b>Luz nocturna</b></div>
+    </div>
+  </main>
+</div></body></html>

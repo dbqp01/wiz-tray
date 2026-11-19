@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><link rel="stylesheet" href="base.css">
+<style>
+  /* Fader: una columna de luz a la izquierda es el regulador; a la derecha, la lista de Windows. */
+  body { --c: 120 170 255; background: #1b1d22; }
+  .titlebar .glyph { background: rgb(var(--c)); box-shadow: 0 0 10px rgb(var(--c)); }
+  main { display: grid; grid-template-columns: 300px 1fr; gap: 0; min-height: 0; }
+  .col { position: relative; margin: 4px 0 16px 16px; border-radius: 16px; overflow: hidden; background: #111317; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06); }
+  .col .lit { position: absolute; left: 0; right: 0; bottom: 0; height: 64%;
+    background: linear-gradient(180deg, rgb(var(--c)) 0%, rgb(76 120 255) 60%, rgb(60 70 200) 100%);
+    box-shadow: 0 -30px 80px 10px rgb(var(--c) / .55); }
+  .col .lit::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: rgba(255, 255, 255, .9); box-shadow: 0 0 18px 4px rgba(255, 255, 255, .7); }
+  .col .lit::after { content: ""; position: absolute; inset: 0; background: radial-gradient(80% 50% at 30% 0%, rgba(255, 255, 255, .35), transparent 70%); }
+  .col .read { position: absolute; left: 22px; top: 22px; }
+  .col .read b { display: flex; font-size: 76px; line-height: .9; font-weight: 600; letter-spacing: -.045em; }
+  .col .read b sup { font-size: 22px; margin: 8px 0 0 4px; opacity: .55; letter-spacing: 0; }
+  .col .read span { display: block; margin-top: 10px; color: rgba(255, 255, 255, .62); }
+  .col .ticks { position: absolute; right: 14px; top: 20px; bottom: 20px; display: flex; flex-direction: column; justify-content: space-between; }
+  .col .ticks i { width: 10px; height: 1px; background: rgba(255, 255, 255, .25); }
+  .col .ticks i:nth-child(odd) { width: 16px; margin-left: -6px; }
+  .col .hint { position: absolute; left: 22px; bottom: 18px; color: rgba(10, 20, 60, .7); font-size: 12px; font-weight: 600; }
+  .side { display: grid; align-content: start; gap: 6px; padding: 4px 20px 16px; min-height: 0; overflow: hidden; }
+  .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .head h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 600; }
+  .head p { margin: 0; color: rgba(255, 255, 255, .55); font-size: 12px; }
+  .tog { display: flex; align-items: center; gap: 10px; color: rgba(255, 255, 255, .8); }
+  .tog .t { width: 40px; height: 20px; border-radius: 10px; background: rgb(var(--c)); display: flex; align-items: center; padding: 0 3px; justify-content: flex-end; }
+  .tog .t::after { content: ""; width: 14px; height: 14px; border-radius: 50%; background: #0b1530; }
+  .card { border-radius: 8px; background: rgba(255, 255, 255, .045); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055); }
+  .temp { padding: 14px 16px; display: grid; gap: 10px; }
+  .temp .r { display: flex; justify-content: space-between; color: rgba(255, 255, 255, .8); }
+  .temp .r span { color: rgba(255, 255, 255, .5); }
+  .track { position: relative; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #ff9a4a, #ffd6a6 40%, #f2f2ff 62%, #9dbaff); }
+  .track::after { content: ""; position: absolute; left: 78%; top: -8px; width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle, #fff 0 5px, #454545 5.5px); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+  .dots { display: flex; gap: 8px; padding: 12px 16px; }
+  .dots b { width: 30px; height: 30px; border-radius: 8px; background: var(--d); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .15); }
+  .dots b.on { box-shadow: 0 0 0 2px #1b1d22, 0 0 0 4px var(--d); }
+  .lab { margin: 10px 2px 2px; display: flex; justify-content: space-between; font-weight: 600; }
+  .lab a { color: rgb(var(--c)); font-weight: 400; }
+  .list { padding: 4px; }
+  .it { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-radius: 6px; }
+  .it i { width: 28px; height: 28px; border-radius: 6px; background: var(--g); }
+  .it small { margin-left: auto; color: rgba(255, 255, 255, .45); font-size: 12px; }
+  .it.on { background: rgba(255, 255, 255, .07); position: relative; }
+  .it.on::before { content: ""; position: absolute; left: 0; top: 13px; bottom: 13px; width: 3px; border-radius: 2px; background: rgb(var(--c)); }
+</style></head>
+<body><div class="win">
+  <div class="titlebar"><span class="glyph"></span>WiZ Tray<div class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10"/></svg></span></div></div>
+  <main>
+    <div class="col">
+      <div class="lit"></div>
+      <div class="read display"><b class="num">64<sup>%</sup></b><span>Océano</span></div>
+      <div class="ticks"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <span class="hint">Arrastra hacia arriba o abajo</span>
+    </div>
+    <div class="side">
+      <div class="head">
+        <div><h1 class="display">Dormitorio</h1><p>En casa · Wi-Fi · −59 dBm</p></div>
+        <div class="tog">Encendida<span class="t"></span></div>
+      </div>
+      <div class="card temp"><div class="r">Blanco<span class="num">5800 K</span></div><div class="track"></div></div>
+      <div class="card dots">
+        <b style="--d:#4f8bff" class="on"></b><b style="--d:#3fd0ff"></b><b style="--d:#3fd69a"></b><b style="--d:#ffe066"></b><b style="--d:#ff9a4a"></b><b style="--d:#ff5f7e"></b><b style="--d:#c45bff"></b><b style="--d:conic-gradient(#ff6b6b,#ffc35c,#67e3a0,#5fc8ff,#8b74ff,#ff6fcb,#ff6b6b)"></b>
+      </div>
+      <div class="lab">Escenas <a>Ver todas</a></div>
+      <div class="card list">
+        <div class="it on" style="--g:linear-gradient(135deg,#2f7dff,#3fe0d0)"><i></i>Océano<small>En movimiento</small></div>
+        <div class="it" style="--g:linear-gradient(135deg,#ffe2a8,#ffb764)"><i></i>Luz de día</div>
+        <div class="it" style="--g:linear-gradient(135deg,#ffb15c,#ff6f7e)"><i></i>Atardecer<small>En movimiento</small></div>
+        <div class="it" style="--g:linear-gradient(135deg,#7b5bff,#c86bff)"><i></i>Relajarse</div>
+        <div class="it" style="--g:linear-gradient(135deg,#2d3a8c,#5b4bb0)"><i></i>Luz nocturna</div>
+        <div class="it" style="--g:linear-gradient(135deg,#ff8a3d,#c2321f)"><i></i>Chimenea<small>En movimiento</small></div>
+      </div>
+    </div>
+  </main>
+</div></body></html>

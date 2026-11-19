@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>WiZ Tray · Luz (prototipo WebGPU)</title>
+<style>
+  /* Minimalista: un shader WebGPU pinta cada escena con su paleta y su bucle; la interfaz es tipografía y puntos. */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0c0b0a; overflow: hidden; }
+  body {
+    --ink: #fff; --ink-2: rgba(255,255,255,.66); --ease: cubic-bezier(0,0,0,1);
+    color: var(--ink);
+    font: 14px/20px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; user-select: none;
+  }
+  body.light-ink { --ink: #17120c; --ink-2: rgba(23,18,12,.62); }
+  canvas, .fallback { position: fixed; inset: 0; width: 100%; height: 100%; }
+  .fallback { background: radial-gradient(70% 60% at 50% 32%, var(--c1, #e2574c), var(--c0, #3a1c4f) 70%, #0c0b0a); opacity: var(--p, 1); transition: opacity .5s var(--ease); }
+  .ui { position: relative; display: grid; grid-template-rows: auto 1fr auto; height: 100%; padding: 18px 24px 22px; cursor: pointer; touch-action: none; }
+  header { display: flex; justify-content: space-between; align-items: baseline; color: var(--ink-2); transition: color .4s; }
+  header b { color: var(--ink); font-weight: 600; transition: color .4s; }
+  .read { align-self: center; justify-self: center; text-align: center; transition: color .4s; }
+  .num { display: flex; justify-content: center; font: 200 148px/0.9 "Segoe UI Variable Display", "Segoe UI", sans-serif; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
+  .num small { font-size: 32px; font-weight: 300; margin: 18px 0 0 6px; letter-spacing: 0; color: var(--ink-2); }
+  .scene { margin-top: 14px; color: var(--ink-2); font-size: 16px; }
+  .scene span { display: inline-block; animation: name-in .45s var(--ease); }
+  @keyframes name-in { from { opacity: 0; transform: translateY(6px); filter: blur(4px); } }
+  body.off .num { font-size: 56px; }
+  footer { display: grid; gap: 18px; }
+  .temp { position: relative; height: 20px; cursor: ew-resize; }
+  .temp::before { content: ""; position: absolute; left: 0; right: 0; top: 9px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, #ffab5c, #ffe6c7 45%, #eef1ff 70%, #a9c3ff); opacity: .8; }
+  .temp i { position: absolute; top: 3px; left: var(--t, 40%); width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.35); transition: transform .2s var(--ease); }
+  .temp:hover i { transform: scale(1.25); }
+  .scenes { display: flex; gap: 14px; align-items: center; }
+  /* Cada punto es la paleta de su escena, en el mismo orden sombra → cuerpo → luz que usa el shader. */
+  .scenes button { position: relative; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: radial-gradient(circle at 32% 28%, var(--c2), var(--c1) 55%, var(--c0)); cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); transition: transform .25s var(--ease); }
+  .scenes button:hover { transform: scale(1.18); }
+  .scenes button.on::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--ink); opacity: .85; animation: ring .35s var(--ease); }
+  .scenes button:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+  .scenes .hint { margin-left: auto; color: var(--ink-2); font-size: 12px; transition: color .4s; }
+  @keyframes ring { from { transform: scale(.6); opacity: 0; } }
+  .fps { position: fixed; right: 10px; top: 4px; font-size: 11px; color: rgba(255,255,255,.3); }
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+</style>
+</head>
+<body>
+<div class="fallback" id="fallback" hidden></div>
+<canvas id="gl"></canvas>
+<div class="ui" id="ui">
+  <header><b>Luz de Dormitorio</b><span>En casa, por Wi-Fi</span></header>
+  <div class="read">
+    <div class="num"><span id="num">74</span><small id="unit">%</small></div>
+    <div class="scene" id="scene"><span>Atardecer</span></div>
+  </div>
+  <footer>
+    <div class="temp" id="temp"><i></i></div>
+    <div class="scenes" id="scenes"><span class="hint">Arrastra para atenuar, clic para apagar</span></div>
+  </footer>
+</div>
+<div class="fps" id="fps"></div>
+<script type="module">
+/* Sistema de escenas. Cada una: paleta sombra / cuerpo / luz y un bucle.
+   Bucles (periodo en segundos, cierran sin corte):
+   0 quieta · 1 oleaje · 2 ocaso · 3 latido · 4 brasa · 5 follaje · 6 fiesta · 7 amanecer */
+const SCENES = [
+  { name: "Atardecer",    pal: ["#3a1c4f", "#e2574c", "#ffb765"], loop: 2, period: 24 },
+  { name: "Océano",       pal: ["#0b3b6e", "#1e7fcb", "#5fd3e6"], loop: 1, period: 18 },
+  { name: "Romance",      pal: ["#4a1030", "#d9467a", "#ff9eb3"], loop: 3, period: 5 },
+  { name: "Chimenea",     pal: ["#2a0e05", "#d9481c", "#ffb347"], loop: 4, period: 1 },
+  { name: "Bosque",       pal: ["#0e2a1c", "#2e8b57", "#c4e38a"], loop: 5, period: 20 },
+  { name: "Fiesta",       pal: ["#6a2bd9", "#ff4fa3", "#2ec5ff"], loop: 6, period: 9 },
+  { name: "Despertar",    pal: ["#5a2a1a", "#ff9a5a", "#ffe3b0"], loop: 7, period: 30 },
+  { name: "Luz de día",   pal: ["#b88a4a", "#ffe2b0", "#fff8ec"], loop: 0, period: 1 },
+  { name: "Relajarse",    pal: ["#2b2350", "#8b6fe0", "#f0c4dc"], loop: 0, period: 1 },
+  { name: "Luz nocturna", pal: ["#070b22", "#24357f", "#6e7fd6"], loop: 0, period: 1 },
+];
+const $ = (id) => document.getElementById(id);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// sRGB → lineal: el shader mezcla en OKLab a partir de valores lineales.
+const lin = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+const hexLin = (h) => [1, 3, 5].map((i) => lin(parseInt(h.slice(i, i + 2), 16) / 255));
+const lerp = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
+
+/* El estado "actual" persigue al "objetivo"; al cambiar de escena se funden dos bucles. */
+let scene = SCENES[0];
+const now = { pal: scene.pal.map(hexLin), power: 0 };
+const want = { pal: scene.pal.map(hexLin), power: 0.74 };
+let loop = scene.loop, prevLoop = scene.loop, period = scene.period, prevPeriod = scene.period, blend = 1;
+let on = true, brightness = 74, igniteAt = -10, igniteOrigin = [0.5, 0.32], shown = 0;
+
+/* ---------- WebGPU ---------- */
+const WGSL = /* wgsl */ `
+struct U { res: vec2f, time: f32, power: f32, c0: vec4f, c1: vec4f, c2: vec4f,
+           ign: vec2f, igt: f32, blend: f32, mode: f32, prev: f32, per: f32, pper: f32 };
+@group(0) @binding(0) var<uniform> u: U;
+const TAU = 6.2831853;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+}
+fn hash(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453); }
+fn noise(p: vec2f) -> f32 {
+  let i = floor(p); let f = fract(p); let s = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2f(1, 0)), s.x), mix(hash(i + vec2f(0, 1)), hash(i + vec2f(1, 1)), s.x), s.y);
+}
+fn fbm(p0: vec2f) -> f32 { var p = p0; var a = 0.5; var v = 0.0; for (var k = 0; k < 3; k++) { v += a * noise(p); p *= 2.03; a *= 0.5; } return v; }
+// OKLab: mezclar aquí evita que el paso entre dos tonos se ensucie de gris.
+fn toLab(c: vec3f) -> vec3f {
+  let l = 0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b;
+  let m = 0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b;
+  let s = 0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b;
+  let q = pow(max(vec3f(l, m, s), vec3f(0.0)), vec3f(1.0 / 3.0));
+  return vec3f(0.2104542553 * q.x + 0.7936177850 * q.y - 0.0040720468 * q.z,
+               1.9779984951 * q.x - 2.4285922050 * q.y + 0.4505937099 * q.z,
+               0.0259040371 * q.x + 0.7827717662 * q.y - 0.8086757660 * q.z);
+}
+fn toLin(o: vec3f) -> vec3f {
+  let l = o.x + 0.3963377774 * o.y + 0.2158037573 * o.z;
+  let m = o.x - 0.1055613458 * o.y - 0.0638541728 * o.z;
+  let s = o.x - 0.0894841775 * o.y - 1.2914855480 * o.z;
+  let q = vec3f(l * l * l, m * m * m, s * s * s);
+  return vec3f(4.0767416621 * q.x - 3.3077115913 * q.y + 0.2309699292 * q.z,
+              -1.2684380046 * q.x + 2.6097574011 * q.y - 0.3413193965 * q.z,
+              -0.0041960863 * q.x - 0.7034186147 * q.y + 1.7076147010 * q.z);
+}
+// Paleta de tres paradas: 0 sombra, 0.5 cuerpo, 1 luz.
+fn pal(t: f32) -> vec3f {
+  let a = toLab(u.c0.rgb); let b = toLab(u.c1.rgb); let c = toLab(u.c2.rgb);
+  let x = clamp(t, 0.0, 1.0);
+  return toLin(select(mix(b, c, x * 2.0 - 1.0), mix(a, b, x * 2.0), x < 0.5));
+}
+// Cada bucle devuelve (posición en la paleta, intensidad). T recorre 0..TAU en un periodo.
+fn sceneAt(id: i32, uv: vec2f, asp: vec2f, per: f32) -> vec2f {
+  let T = TAU * fract(u.time / per);
+  let ring = vec2f(cos(T), sin(T));               // muestrear ruido sobre un círculo = bucle perfecto
+  let d = length((uv - vec2f(0.5, 0.34)) * asp);
+  let glow = exp(-d * d * 2.6);
+  let p = uv * asp;
+  switch id {
+    case 1: { // oleaje: bandas de luz que cruzan como cáusticas
+      let w = fbm(p * 2.4 + ring * 0.9);
+      // Cáusticas: el pico estrecho de dos ondas cruzadas deja líneas finas de luz.
+      let a = abs(sin(p.x * 6.0 + w * 5.0 + T));
+      let b = abs(sin(p.y * 5.0 - w * 4.0 + T * 2.0));
+      let caustic = pow(1.0 - min(a, b), 6.0);
+      return vec2f(glow * 0.7 + w * 0.25 + caustic * 0.45, 1.0);
+    }
+    case 2: { // ocaso: el horizonte respira y el sol se hunde y vuelve
+      let sun = exp(-pow(length((uv - vec2f(0.5, 0.42 + 0.05 * sin(T))) * asp), 2.0) * 9.0);
+      let sky = 1.0 - uv.y + 0.06 * sin(p.x * 3.0 + T) + fbm(p * 1.5 + ring * 0.4) * 0.15;
+      return vec2f(sky * 0.65 + sun * 0.6, 1.0);
+    }
+    case 3: { // latido: dos pulsos cortos y una pausa, como un corazón en reposo
+      let b = fract(u.time / per);
+      let beat = exp(-pow((b - 0.12) * 18.0, 2.0)) + 0.6 * exp(-pow((b - 0.3) * 18.0, 2.0));
+      return vec2f(glow * (0.75 + 0.3 * beat) + fbm(p * 1.8 + ring * 0.2) * 0.12, 0.85 + 0.2 * beat);
+    }
+    case 4: { // brasa: llama que sube y parpadea
+      // En pantalla y crece hacia abajo: el fuego nace abajo y sus lenguas suben.
+      let rise = fbm(vec2f(p.x * 3.0, p.y * 2.2 + u.time * 0.55));
+      let tongues = smoothstep(0.15, 1.0, uv.y + (rise - 0.5) * 0.7);
+      let flick = 0.9 + 0.1 * noise(vec2f(u.time * 7.0, 0.0));
+      return vec2f(tongues * 0.95 + glow * 0.12, flick);
+    }
+    case 5: { // follaje: luz moteada que se mueve como entre hojas
+      let leaf = fbm(p * 4.5 + ring * 0.7);
+      let dapple = smoothstep(0.42, 0.68, leaf);
+      return vec2f(glow * 0.55 + dapple * 0.5, 1.0);
+    }
+    case 6: { // fiesta: la paleta gira por la pantalla, sin cortes
+      let f = fract(p.x * 0.35 + p.y * 0.25 + u.time / per + fbm(p * 2.0 + ring) * 0.3);
+      return vec2f(abs(f * 2.0 - 1.0) * 0.9 + glow * 0.15, 1.0);
+    }
+    case 7: { // amanecer: la luz sube despacio desde abajo y se asienta
+      let r = 0.5 - 0.5 * cos(T);
+      let horizon = smoothstep(-0.1, 0.8, uv.y + r * 0.35 - 0.2);
+      return vec2f(horizon * (0.5 + 0.5 * r) + glow * 0.3, 0.7 + 0.3 * r);
+    }
+    default: { // quieta: escenas fijas de WiZ, solo la luz y su degradado
+      return vec2f(glow * 0.85 + (1.0 - uv.y) * 0.2, 1.0);
+    }
+  }
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let uv = pos.xy / u.res;
+  let asp = vec2f(u.res.x / u.res.y, 1.0);
+  var s = sceneAt(i32(u.mode), uv, asp, u.per);
+  if (u.blend < 0.999) { s = mix(sceneAt(i32(u.prev), uv, asp, u.pper), s, u.blend); }
+  let d = length((uv - vec2f(0.5, 0.34)) * asp);
+  let vign = smoothstep(1.25, 0.25, d);
+  let level = (0.06 + 0.94 * u.power) * s.y;
+  var c = pal(s.x) * level * (0.25 + 0.75 * vign);
+  // Ignición: un frente de luz que se abre desde el punto pulsado.
+  let r = length((uv - u.ign) * asp);
+  let front = u.igt * 1.6;
+  c += pal(0.9) * smoothstep(front, front - 0.25, r) * (1.0 - u.igt) * 0.6;
+  c = mix(vec3f(0.004), c, clamp(u.power * 4.0, 0.0, 1.0));
+  // Lineal → sRGB y tramado contra bandas.
+  var o = select(1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3f(0.0031308));
+  o += (hash(pos.xy + fract(u.time)) - 0.5) / 255.0;
+  return vec4f(o, 1.0);
+}`;
+
+const canvas = $("gl");
+let gpu = null;
+async function initGpu() {
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) return null;
+  const device = await adapter.requestDevice();
+  const ctx = canvas.getContext("webgpu");
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({ device, format, alphaMode: "opaque" });
+  const module = device.createShaderModule({ code: WGSL });
+  const pipeline = device.createRenderPipeline({ layout: "auto", vertex: { module, entryPoint: "vs" }, fragment: { module, entryPoint: "fs", targets: [{ format }] } });
+  const ubuf = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }] });
+  return { device, ctx, pipeline, ubuf, bind, data: new Float32Array(24) };
+}
+function resize() {
+  // shortcut: tercio de resolución fijo; subir a 0.5 si en pantallas grandes se nota borroso.
+  canvas.width = Math.max(1, Math.round(innerWidth * 0.34));
+  canvas.height = Math.max(1, Math.round(innerHeight * 0.34));
+}
+
+/* ---------- bucle: 30 fps como mucho y en reposo cuando nada se mueve ---------- */
+let raf = 0, last = 0, frames = 0, fpsAt = performance.now();
+function busy() {
+  const settling = Math.abs(now.power - want.power) > 0.002 || blend < 1 ||
+    now.pal.some((c, i) => c.some((v, j) => Math.abs(v - want.pal[i][j]) > 0.001));
+  return settling || (scene.loop && on && !reduce) || performance.now() / 1000 - igniteAt < 1.1;
+}
+function wake() { if (!raf && !document.hidden) raf = requestAnimationFrame(frame); }
+function frame(ms) {
+  raf = 0;
+  if (ms - last >= 33) {
+    const dt = Math.min(100, ms - last);
+    last = ms;
+    const k = 1 - Math.exp(-dt / 220);
+    now.power += (want.power - now.power) * k;
+    now.pal = now.pal.map((c, i) => lerp(c, want.pal[i], k));
+    blend = Math.min(1, blend + dt / 700);
+    draw(ms / 1000);
+    frames++;
+  }
+  if (ms - fpsAt > 1000) { $("fps").textContent = `${gpu ? "WebGPU" : "CSS"} · ${frames} fps`; frames = 0; fpsAt = ms; }
+  if (busy()) raf = requestAnimationFrame(frame);
+  else $("fps").textContent = `${gpu ? "WebGPU" : "CSS"} · en reposo`;
+}
+function draw(t) {
+  if (!gpu) {
+    const css = (c) => `rgb(${c.map((v) => Math.round((v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055) * 255)).join(" ")})`;
+    $("fallback").style.setProperty("--c0", css(now.pal[0]));
+    $("fallback").style.setProperty("--c1", css(now.pal[1]));
+    $("fallback").style.setProperty("--p", 0.1 + now.power * 0.9);
+    return;
+  }
+  const [c0, c1, c2] = now.pal;
+  gpu.data.set([canvas.width, canvas.height, reduce ? 0 : t, now.power, ...c0, 0, ...c1, 0, ...c2, 0,
+    ...igniteOrigin, Math.min(1, (t - igniteAt) / 1.0), blend, loop, prevLoop, period, prevPeriod]);
+  gpu.device.queue.writeBuffer(gpu.ubuf, 0, gpu.data);
+  const enc = gpu.device.createCommandEncoder();
+  const pass = enc.beginRenderPass({ colorAttachments: [{ view: gpu.ctx.getCurrentTexture().createView(), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] }] });
+  pass.setPipeline(gpu.pipeline);
+  pass.setBindGroup(0, gpu.bind);
+  pass.draw(3);
+  pass.end();
+  gpu.device.queue.submit([enc.finish()]);
+}
+document.addEventListener("visibilitychange", wake);
+addEventListener("resize", () => { resize(); wake(); });
+
+/* ---------- interfaz ---------- */
+function setInk() {
+  // El texto se elige sobre el cuerpo de la paleta a la potencia actual.
+  const [r, g, b] = want.pal[1];
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) * want.power;
+  document.body.classList.toggle("light-ink", on && lum > 0.42);
+}
+function count(to) {
+  const from = shown, start = performance.now();
+  const step = (ms) => { const p = Math.min(1, (ms - start) / 380); shown = Math.round(from + (to - from) * (1 - (1 - p) ** 4)); $("num").textContent = shown; if (p < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+function apply() {
+  want.power = on ? Math.max(0.12, brightness / 100) : 0;
+  document.body.classList.toggle("off", !on);
+  $("unit").hidden = !on;
+  if (on) count(brightness); else { $("num").textContent = "Apagado"; shown = 0; }
+  setInk(); wake();
+}
+function showName(text) {
+  const span = document.createElement("span");
+  span.textContent = text;
+  $("scene").replaceChildren(span);
+}
+function pick(next, palette = next.pal.map(hexLin)) {
+  if (next.loop !== scene.loop || next.period !== scene.period) {
+    prevLoop = loop; prevPeriod = period; blend = 0;
+  }
+  scene = next; loop = next.loop; period = next.period;
+  want.pal = palette;
+}
+
+SCENES.forEach((s, i) => {
+  const b = document.createElement("button");
+  ["--c0", "--c1", "--c2"].forEach((v, j) => b.style.setProperty(v, s.pal[j]));
+  b.title = s.name;
+  b.setAttribute("aria-label", s.name);
+  b.classList.toggle("on", i === 0);
+  b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".scenes button").forEach((x, j) => x.classList.toggle("on", j === i));
+    pick(s);
+    showName(s.name);
+    if (!on) { on = true; igniteAt = performance.now() / 1000; igniteOrigin = [0.5, 0.34]; }
+    apply();
+  });
+  $("scenes").insertBefore(b, $("scenes").lastElementChild);
+});
+
+/* Blanco: paleta tonal de un solo color (sombra más oscura del mismo tono), sin bucle. */
+const temp = $("temp");
+temp.addEventListener("pointerdown", (e) => {
+  e.stopPropagation();
+  temp.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    const x = Math.min(1, Math.max(0, (ev.clientX - temp.getBoundingClientRect().left) / temp.clientWidth));
+    temp.style.setProperty("--t", `${x * 100}%`);
+    const warm = hexLin("#ffb46b"), mid = hexLin("#fff1e0"), cool = hexLin("#c9d8ff");
+    const body = x < 0.5 ? lerp(warm, mid, x * 2) : lerp(mid, cool, (x - 0.5) * 2);
+    pick({ name: "Blanco", loop: 0, period: 1 }, [body.map((v) => v * 0.18), body, lerp(body, [1, 1, 1], 0.6)]);
+    document.querySelectorAll(".scenes button").forEach((b) => b.classList.remove("on"));
+    $("scene").firstChild.textContent = `Blanco, ${Math.round(2200 + x * 4300)} K`;
+    setInk(); wake();
+  };
+  move(e);
+  temp.onpointermove = move;
+  temp.onpointerup = () => (temp.onpointermove = null);
+});
+
+/* Toda la ventana es el regulador: arrastrar atenúa, un clic enciende o apaga desde ese punto. */
+let drag = null;
+$("ui").addEventListener("pointerdown", (e) => { drag = { x: e.clientX, b: brightness, moved: false }; $("ui").setPointerCapture(e.pointerId); });
+$("ui").addEventListener("pointermove", (e) => {
+  if (!drag || !on) return;
+  const dx = e.clientX - drag.x;
+  if (!drag.moved && Math.abs(dx) < 6) return;
+  drag.moved = true;
+  brightness = Math.round(Math.min(100, Math.max(1, drag.b + (dx / innerWidth) * 140)));
+  want.power = Math.max(0.12, brightness / 100);
+  shown = brightness; $("num").textContent = brightness;
+  setInk(); wake();
+});
+$("ui").addEventListener("pointerup", (e) => {
+  if (drag && !drag.moved) {
+    on = !on;
+    igniteAt = performance.now() / 1000;
+    igniteOrigin = [e.clientX / innerWidth, e.clientY / innerHeight];
+    apply();
+  }
+  drag = null;
+});
+
+resize();
+gpu = await initGpu().catch(() => null);
+if (!gpu) { canvas.hidden = true; $("fallback").hidden = false; }
+igniteAt = performance.now() / 1000;
+apply();
+
+/* Solo para capturas en pestañas ocultas (sin requestAnimationFrame): fija la escena y dibuja un fotograma. */
+window.still = (index = 0, t = 40) => {
+  document.querySelectorAll(".scenes button")[index].click();
+  igniteAt = -10; blend = 1;
+  now.power = want.power; now.pal = want.pal.map((c) => [...c]);
+  shown = brightness; $("num").textContent = brightness;
+  draw(t);
+  return gpu ? "webgpu" : "css";
+};
+</script>
+</body>
+</html>

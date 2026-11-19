@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><link rel="stylesheet" href="base.css">
+<style>
+  /* Halo: la luz del foco ilumina la ventana como una pared; los controles flotan en Acrylic. */
+  body { --c: 255 168 92; --c2: 255 120 140; background: #0e0c0c; }
+  .glow { position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(60% 46% at 50% 26%, rgb(var(--c) / .95), rgb(var(--c) / .35) 45%, transparent 75%),
+      radial-gradient(40% 40% at 78% 12%, rgb(var(--c2) / .55), transparent 70%),
+      radial-gradient(80% 60% at 50% 110%, rgb(var(--c) / .10), transparent 70%); filter: saturate(1.05); }
+  .glow::after { content: ""; position: absolute; inset: 0; opacity: .07; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .titlebar { color: rgba(255, 240, 230, .78); }
+  .titlebar .glyph { background: #fff6ec; box-shadow: 0 0 10px #fff; }
+  main { position: relative; display: grid; grid-template-rows: auto 1fr auto; padding: 4px 28px 24px; }
+  .top { display: flex; justify-content: space-between; align-items: center; color: #fff4ea; }
+  .who b { display: block; font-size: 15px; font-weight: 600; } .who span { font-size: 12px; opacity: .7; }
+  .pw { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .42); color: #2a1810; box-shadow: 0 6px 20px rgba(120, 40, 0, .18), inset 0 1px 0 rgba(255, 255, 255, .6); }
+  .pw .icon { width: 18px; height: 18px; stroke-width: 1.7; }
+  .center { display: grid; place-content: center; justify-items: center; color: #2a1810; margin-top: -24px; }
+  .big { font-size: 128px; line-height: .9; font-weight: 300; letter-spacing: -.05em; display: flex; }
+  .big sup { font-size: 30px; font-weight: 400; margin: 14px 0 0 6px; letter-spacing: 0; opacity: .6; }
+  .scene { margin-top: 14px; font-size: 17px; display: flex; gap: 8px; align-items: center; }
+  .scene i { width: 7px; height: 7px; border-radius: 50%; background: #2a1810; opacity: .5; }
+  .panel { display: grid; gap: 16px; padding: 18px 20px 20px; border-radius: 14px;
+    background: rgba(28, 26, 26, .72); backdrop-filter: blur(30px) saturate(1.4);
+    box-shadow: 0 30px 60px -20px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(255, 255, 255, .06); }
+  .fader { position: relative; height: 44px; border-radius: 12px; overflow: hidden; background: rgba(255, 255, 255, .06); }
+  .fader .fill { position: absolute; inset: 0 26% 0 0; background: linear-gradient(90deg, rgb(var(--c) / .55), rgb(var(--c))); border-radius: 12px; }
+  .fader .fill::after { content: ""; position: absolute; right: 8px; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: rgba(255, 255, 255, .9); }
+  .fader label { position: absolute; left: 14px; top: 12px; color: #2a1810; font-weight: 600; display: flex; gap: 8px; align-items: center; }
+  .fader.temp { height: 36px; background: linear-gradient(90deg, #ff9a4a, #ffd6a6 42%, #f6f3ff 66%, #a8c4ff); }
+  .fader.temp .knob { position: absolute; left: 34%; top: 4px; bottom: 4px; width: 28px; border-radius: 9px; background: rgba(255, 255, 255, .95); box-shadow: 0 2px 8px rgba(0, 0, 0, .3); }
+  .fader.temp span { position: absolute; top: 8px; font-size: 12px; color: rgba(40, 24, 10, .7); }
+  .row { display: flex; align-items: center; justify-content: space-between; }
+  .dots { display: flex; gap: 10px; }
+  .dots b { width: 26px; height: 26px; border-radius: 50%; background: var(--d); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18); }
+  .dots b.on { box-shadow: 0 0 0 2px #1c1a1a, 0 0 0 4px var(--d); }
+  .label { color: rgba(255, 255, 255, .55); font-size: 12px; }
+  .chips { display: flex; gap: 8px; overflow: hidden; }
+  .chip { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 16px 0 6px; border-radius: 20px; background: rgba(255, 255, 255, .06); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06); }
+  .chip i { width: 28px; height: 28px; border-radius: 50%; background: var(--g); }
+  .chip.on { background: rgb(var(--c) / .22); box-shadow: inset 0 0 0 1px rgb(var(--c) / .6); }
+</style></head>
+<body><div class="win">
+  <div class="glow"></div>
+  <div class="titlebar"><span class="glyph"></span>WiZ Tray<div class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10"/></svg></span></div></div>
+  <main>
+    <div class="top">
+      <div class="who"><b>Luz de Dormitorio</b><span>En casa · Wi-Fi</span></div>
+      <span class="pw"><svg class="icon" viewBox="0 0 16 16"><path d="M8 1.8v5.4"/><path d="M4.6 3.8a5.2 5.2 0 1 0 6.8 0"/></svg></span>
+    </div>
+    <div class="center display">
+      <div class="big num">74<sup>%</sup></div>
+      <div class="scene"><i></i>Atardecer · escena en movimiento</div>
+    </div>
+    <div class="panel">
+      <div class="fader"><div class="fill"></div><label><svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3"/></svg>Brillo</label></div>
+      <div class="fader temp"><div class="knob"></div><span style="left:14px">Cálido</span><span style="right:14px">Frío</span></div>
+      <div class="row">
+        <div class="dots">
+          <b style="--d:#ff9a4a" class="on"></b><b style="--d:#ff5f7e"></b><b style="--d:#c45bff"></b><b style="--d:#5b7dff"></b><b style="--d:#3fc8ff"></b><b style="--d:#3fd69a"></b><b style="--d:#ffe066"></b><b style="--d:conic-gradient(#ff6b6b,#ffc35c,#67e3a0,#5fc8ff,#8b74ff,#ff6fcb,#ff6b6b)"></b>
+        </div>
+        <span class="label">Ver las 28 escenas</span>
+      </div>
+      <div class="chips">
+        <span class="chip on" style="--g:linear-gradient(135deg,#ffb15c,#ff6f7e)"><i></i>Atardecer</span>
+        <span class="chip" style="--g:linear-gradient(135deg,#ffe2a8,#ffb764)"><i></i>Luz de día</span>
+        <span class="chip" style="--g:linear-gradient(135deg,#2f7dff,#3fe0d0)"><i></i>Océano</span>
+        <span class="chip" style="--g:linear-gradient(135deg,#7b5bff,#c86bff)"><i></i>Relajarse</span>
+        <span class="chip" style="--g:linear-gradient(135deg,#ff8a3d,#c2321f)"><i></i>Chimenea</span>
+      </div>
+    </div>
+  </main>
+</div></body></html>
