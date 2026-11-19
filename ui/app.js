@@ -1,4 +1,4 @@
-/* Interfaz de WiZ Tray: estado en vivo + foquito que sigue a la luz. */
+/* Interfaz de WiZ Tray: la ventana toma el color y el brillo reales del foco. */
 
 const bridge = window.__TAURI__
   ? {
@@ -9,34 +9,21 @@ const bridge = window.__TAURI__
   : null;
 
 const $ = (id) => document.getElementById(id);
-const OFF_RGB = [74, 74, 84];
+
+/* Windows 11 (platformVersion >= 13) pinta Mica detrás de la ventana transparente;
+   en Windows 10 se mantiene el fondo sólido para que no se vea el escritorio. */
+navigator.userAgentData
+  ?.getHighEntropyValues(["platformVersion"])
+  .then(({ platformVersion }) => {
+    if (bridge && parseInt(platformVersion, 10) >= 13) document.documentElement.classList.add("mica");
+  })
+  .catch(() => {});
+
 const AMBER = [245, 181, 68];
 
 let state = null;
 let timerSeconds = null;
-let lastRead = null;
-let lastLiveHex = null;
-
-/* Parallax: la lámpara y la atmósfera siguen al puntero. */
-let parallaxFrame = 0;
-const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
-document.addEventListener(
-  "pointermove",
-  (event) => {
-    if (reduceMotion.matches || parallaxFrame) return;
-    parallaxFrame = requestAnimationFrame(() => {
-      const root = document.documentElement.style;
-      root.setProperty("--mx", ((event.clientX / innerWidth) * 2 - 1).toFixed(3));
-      root.setProperty("--my", ((event.clientY / innerHeight) * 2 - 1).toFixed(3));
-      parallaxFrame = 0;
-    });
-  },
-  { passive: true },
-);
-document.addEventListener("pointerleave", () => {
-  document.documentElement.style.setProperty("--mx", "0");
-  document.documentElement.style.setProperty("--my", "0");
-});
+let view = null;
 
 /* ---------- color ---------- */
 
@@ -59,20 +46,17 @@ function kelvinToRgb(kelvin) {
 }
 
 function sceneById(sceneId) {
-  return [...(state?.scenes ?? []), ...(state?.favorites ?? [])].find(
+  // En modo navegador las escenas no favoritas solo existen en el catálogo de prueba.
+  return [...(state?.scenes ?? []), ...(state?.favorites ?? []), ...(bridge ? [] : CATALOG)].find(
     (candidate) => candidate.id === sceneId,
   );
-}
-
-function sceneColor(sceneId) {
-  return sceneById(sceneId)?.color ?? null;
 }
 
 function liveColor() {
   const pilot = state?.pilot;
   if (!pilot) return AMBER;
   if (pilot.color) return pilot.color;
-  const scene = sceneColor(pilot.scene_id);
+  const scene = sceneById(pilot.scene_id)?.color;
   if (scene) return scene;
   return kelvinToRgb(pilot.temp ?? state?.temperature ?? 4000);
 }
@@ -90,54 +74,39 @@ function hexToRgb(hex) {
   return [0, 2, 4].map((offset) => parseInt(value.slice(offset, offset + 2), 16));
 }
 
-/* Pinta la interfaz sin esperar al foco: lo usan los diales y el selector. */
-function previewColor(rgb) {
+/* Escena que pinta la luz ahora: solo cuando el foco está en una escena (no en color ni en blanco). */
+function liveScene() {
+  const pilot = state?.pilot;
+  if (!pilot?.state || pilot.color || !pilot.scene_id) return null;
+  return sceneById(pilot.scene_id) ?? { id: pilot.scene_id };
+}
+
+/* Pinta la luz: color real y potencia (0 apagado, 0.15–1 según el brillo).
+   `scene` elige la paleta y el bucle de la escena; null pinta solo ese color. */
+function paint(rgb, power, scene = liveScene()) {
   const root = document.documentElement.style;
-  const accent = lift(rgb);
   root.setProperty("--bulb", `rgb(${rgb.join(" ")})`);
-  root.setProperty("--bulb-hi", `rgb(${tint(rgb, 0.72).join(" ")})`);
+  root.setProperty("--power", power.toFixed(2));
+  const target = scene ? { id: scene.id, rgb: scene.color ?? rgb, animated: scene.animated } : { rgb };
+  // El texto se elige sobre el cuerpo de la paleta a la potencia que se ve.
+  const shown = window.Light.set(target, power);
+  root.setProperty("--on-light", shown > 0.42 ? "#141210" : "#ffffff");
+  root.setProperty("--on-light-2", shown > 0.42 ? "rgba(20, 18, 16, 0.66)" : "rgba(255, 255, 255, 0.7)");
+  const accent = power ? rgb.map((value) => Math.round(value + (255 - value) * 0.28)) : AMBER;
   root.setProperty("--accent", `rgb(${accent.join(" ")})`);
-  root.setProperty("--accent-ink", luminance(accent) > 0.55 ? "#17130a" : "#fdf6ea");
-  $("statColorHex").textContent = toHex(rgb);
-  if ($("customColor")) $("customColor").value = toHex(rgb);
+  root.setProperty("--accent-ink", luminance(accent) > 0.55 ? "#17130a" : "#ffffff");
+}
+
+function isOn() {
+  return Boolean(state?.pilot?.state);
+}
+
+function powerOf(brightness) {
+  return isOn() ? Math.max(0.15, brightness / 100) : 0;
 }
 
 function applyColors() {
-  const pilot = state?.pilot;
-  const on = Boolean(pilot?.state);
-  const power = on ? Math.max(0.15, (state?.brightness ?? 100) / 100) : 0;
-  const live = liveColor();
-  const bulb = on ? live : OFF_RGB;
-
-  const root = document.documentElement;
-  root.style.setProperty("--bulb", `rgb(${bulb.join(" ")})`);
-  root.style.setProperty("--bulb-hi", `rgb(${tint(bulb, 0.72).join(" ")})`);
-  root.style.setProperty("--power", power.toFixed(2));
-
-  const accent = on ? lift(live) : AMBER;
-  root.style.setProperty("--accent", `rgb(${accent.join(" ")})`);
-  root.style.setProperty("--accent-ink", luminance(accent) > 0.55 ? "#17130a" : "#fdf6ea");
-
-  // Cada cambio de color hace latir el foquito.
-  const hex = toHex(bulb);
-  if (lastLiveHex && lastLiveHex !== hex) flashLamp();
-  lastLiveHex = hex;
-}
-
-function flashLamp() {
-  const lamp = document.querySelector(".bulb");
-  if (!lamp) return;
-  lamp.classList.remove("is-flash");
-  void lamp.offsetWidth;
-  lamp.classList.add("is-flash");
-}
-
-function lift([r, g, b]) {
-  return [r, g, b].map((value) => Math.round(Math.min(255, value + (255 - value) * 0.32)));
-}
-
-function tint(rgb, amount) {
-  return rgb.map((value) => Math.round(value + (255 - value) * amount));
+  paint(liveColor(), powerOf(state?.brightness ?? 100));
 }
 
 /* ---------- render ---------- */
@@ -145,120 +114,170 @@ function tint(rgb, amount) {
 function render(snapshot) {
   state = snapshot;
   timerSeconds = snapshot.timer_left;
-
   applyColors();
-  syncTab(snapshot);
+  syncView();
 
   const pilot = snapshot.pilot;
   const currentScene = pilot?.scene_id ? sceneById(pilot.scene_id) : null;
-  const sceneName = currentScene?.name ?? "Modo actual";
-
-  // Las escenas animadas de WiZ hacen girar el arco del foquito.
-  document
-    .querySelector(".bulb")
-    ?.classList.toggle("is-animated", Boolean(pilot?.state && currentScene?.animated));
-
   $("deviceName").textContent = snapshot.device_name || "Mi foco";
   $("backendChip").textContent = snapshot.backend_label;
+  document.body.classList.toggle("is-off", !pilot?.state);
+  document.body.classList.toggle("is-offline", !pilot);
+  document.body.classList.toggle("is-animated", Boolean(pilot?.state && currentScene?.animated));
 
   $("sceneName").textContent = !pilot
-    ? "Sin conexión con el foco"
+    ? snapshot.connected
+      ? "El foco no responde"
+      : "Sin foco configurado"
     : pilot.state
-      ? `${sceneName} · ${pilot.temp ?? snapshot.temperature} K · ${snapshot.brightness} %`
-      : "Foco apagado";
-
-  $("powerBtn").textContent = pilot?.state ? "Apagar" : "Encender";
+      ? currentScene
+        ? currentScene.name
+        : `Blanco · ${pilot.temp ?? snapshot.temperature} K`
+      : "Apagado";
   $("powerBtn").disabled = !pilot;
+  $("powerBtn").setAttribute("aria-pressed", String(Boolean(pilot?.state)));
 
-  lastRead = new Date();
-  $("stamp").textContent = `Actualizado ${lastRead.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  })}`;
-
-  setSlider("brightness", snapshot.brightness, 1, 100);
-  $("brightnessValue").textContent = `${snapshot.brightness} %`;
-  document.documentElement.style.setProperty("--v", snapshot.brightness);
-
+  setBrightness(snapshot.brightness);
   const [min, max] = snapshot.white_range ?? [2200, 6500];
   const temperature = $("temperature");
   temperature.min = min;
   temperature.max = max;
-  setSlider("temperature", snapshot.temperature, min, max);
+  if (document.activeElement !== temperature) temperature.value = snapshot.temperature;
   $("temperatureValue").textContent = `${snapshot.temperature} K`;
-  $("tempMin").textContent = `${min} K`;
-  $("tempMax").textContent = `${max} K`;
 
-  $("statColorHex").textContent = toHex(liveColor());
-  $("statSignal").textContent =
-    pilot?.rssi !== null && pilot?.rssi !== undefined ? `${pilot.rssi} dBm` : "—";
-  $("statRange").textContent = `${min}–${max} K`;
-
-  $("localState").textContent = snapshot.has_local ? "Configurado" : "Sin configurar";
-  $("cloudState").textContent = snapshot.cloud_ready ? "Credenciales guardadas" : "Sin credenciales";
+  $("stamp").textContent = pilot?.rssi != null ? `${pilot.rssi} dBm` : "";
   $("statusText").textContent = snapshot.busy ? "Trabajando…" : snapshot.status || "Listo";
   $("errorText").textContent = snapshot.error ?? "";
   document.body.classList.toggle("is-busy", Boolean(snapshot.busy));
 
-  for (const button of $("backendSwitch").querySelectorAll(".segmented__btn")) {
-    button.classList.toggle("is-active", button.dataset.backend === snapshot.backend);
-  }
-
-  if (document.activeElement !== $("localExport")) $("localExport").value = snapshot.local_export;
-  if (document.activeElement !== $("localIp")) $("localIp").value = snapshot.local_ip;
-  if (document.activeElement !== $("localMac")) $("localMac").value = snapshot.local_mac;
-  if (document.activeElement !== $("cloudDeviceId")) $("cloudDeviceId").value = snapshot.cloud_device_id;
-  if (document.activeElement !== $("cloudHomeId")) $("cloudHomeId").value = snapshot.cloud_home_id;
-  if (document.activeElement !== $("cloudMac")) $("cloudMac").value = snapshot.cloud_mac;
-  if (document.activeElement !== $("cloudMin")) $("cloudMin").value = snapshot.cloud_min;
-  if (document.activeElement !== $("cloudMax")) $("cloudMax").value = snapshot.cloud_max;
-
-  const routine = snapshot.routine;
-  $("routineEnabled").checked = routine.enabled;
-  $("routineAction").value = routine.action;
-  const hour = Math.floor(routine.minute_of_day / 60);
-  const minute = routine.minute_of_day % 60;
-  $("routineTime").value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-  $("routineNote").textContent = routine.last_run_day
-    ? `Se aplica una vez al día, a la hora local de este equipo. Última ejecución: ${routine.last_run_day}.`
-    : "Se aplica una vez al día, a la hora local de este equipo.";
-
-  $("allScenesBtn").textContent =
-    snapshot.scenes.length > snapshot.favorites.length ? "Ver solo las favoritas" : "Ver las 28 escenas";
-
+  renderSettings(snapshot);
   renderScenes(snapshot);
   renderColors(snapshot);
   renderTimer();
+
+  // El foco local dejó de contestar (p. ej. el router le dio otra IP): buscarlo, como mucho cada minuto.
+  if (snapshot.backend === "local" && snapshot.has_local && !pilot && Date.now() - lastAutoScan > 60000) {
+    lastAutoScan = Date.now();
+    scan({ auto: true });
+  }
+}
+
+let lastAutoScan = 0;
+
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+let shownBrightness = null;
+let countFrame = 0;
+
+/* El número cuenta hasta el valor nuevo; mientras se arrastra, sigue al dedo sin retraso. */
+function setBrightness(value, { instant = false } = {}) {
+  const slider = $("brightness");
+  if (document.activeElement !== slider) slider.value = value;
+  slider.style.setProperty("--v", value);
+  $("lampBtn").setAttribute("aria-valuenow", value);
+  $("lampBtn").style.setProperty("--lv", isOn() ? value / 100 : 0);
+  const label = $("brightnessValue");
+  const on = isOn() || !state?.pilot;
+  document.body.classList.toggle("shows-word", !on);
+  cancelAnimationFrame(countFrame);
+  if (!on) {
+    label.textContent = "Apagado";
+    shownBrightness = null;
+    return;
+  }
+  const from = shownBrightness ?? 0;
+  shownBrightness = value;
+  if (instant || reduceMotion.matches || from === value) {
+    label.textContent = value;
+    return;
+  }
+  const started = performance.now();
+  const duration = Math.min(520, 160 + Math.abs(value - from) * 6);
+  const step = (now) => {
+    const t = Math.min(1, (now - started) / duration);
+    const eased = 1 - Math.pow(1 - t, 4);
+    label.textContent = Math.round(from + (value - from) * eased);
+    if (t < 1) countFrame = requestAnimationFrame(step);
+  };
+  countFrame = requestAnimationFrame(step);
+}
+
+function renderSettings(snapshot) {
+  const keep = (id, value) => {
+    if (document.activeElement !== $(id)) $(id).value = value;
+  };
+  keep("localExport", snapshot.local_export);
+  keep("localIp", snapshot.local_ip);
+  keep("localMac", snapshot.local_mac);
+  keep("cloudDeviceId", snapshot.cloud_device_id);
+  keep("cloudHomeId", snapshot.cloud_home_id);
+  keep("cloudMac", snapshot.cloud_mac);
+  keep("cloudMin", snapshot.cloud_min);
+  keep("cloudMax", snapshot.cloud_max);
+
+  for (const button of $("backendSwitch").querySelectorAll(".segmented__btn")) {
+    button.classList.toggle("is-active", button.dataset.backend === snapshot.backend);
+  }
+  $("backendSwitch").dataset.backend = snapshot.backend;
+  document.querySelector(".app").dataset.backend = snapshot.backend;
+
+  const chip = (id, done, label) => {
+    $(id).textContent = label;
+    $(id).classList.toggle("chip--ok", done);
+  };
+  chip("localState", snapshot.has_local, snapshot.has_local ? "Conectado" : "Sin configurar");
+  const cloudLabel = snapshot.has_cloud && snapshot.cloud_session
+    ? "Conectado"
+    : snapshot.cloud_ready
+      ? "Falta iniciar sesión"
+      : "Sin credenciales";
+  chip("cloudState", snapshot.has_cloud && snapshot.cloud_session, cloudLabel);
+
+  // Pasos de Cloud: cada uno se marca solo cuando ya está hecho.
+  const hasDevice = Boolean(snapshot.cloud_device_id && snapshot.cloud_home_id);
+  $("stepExport").classList.toggle("is-done", hasDevice);
+  $("stepOauth").classList.toggle("is-done", snapshot.cloud_ready);
+  $("stepLogin").classList.toggle("is-done", snapshot.cloud_session);
+  $("oauthFields").hidden = snapshot.cloud_ready && !editingOauth;
+  $("saveOauthBtn").textContent = snapshot.cloud_ready && !editingOauth
+    ? "Reemplazar credenciales"
+    : "Guardar credenciales";
+  $("loginCloudBtn").disabled = !snapshot.cloud_ready || !hasDevice;
+  $("clearSessionBtn").hidden = !snapshot.cloud_session;
+
+  const routine = snapshot.routine;
+  $("routineEnabled").checked = routine.enabled;
+  keep("routineAction", routine.action);
+  const hour = Math.floor(routine.minute_of_day / 60);
+  const minute = routine.minute_of_day % 60;
+  keep("routineTime", `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
+  $("routineNote").textContent = routine.last_run_day
+    ? `Una vez al día, con la hora de este equipo. Última vez: ${routine.last_run_day}.`
+    : "Una vez al día, con la hora de este equipo.";
 }
 
 function renderColors(snapshot) {
   const row = $("colorRow");
   const colors = snapshot.colors ?? [];
-  const live = toHex(liveColor());
   const signature = colors.map((color) => color.join(",")).join(";");
   if (row.dataset.signature === signature) {
-    const input = $("customColor");
-    if (input && document.activeElement !== input) input.value = live;
+    markColor();
     return;
   }
   row.dataset.signature = signature;
   row.replaceChildren();
-
-  // Un hueco más para el selector libre, al final del arco.
-  const slots = colors.length + 1;
-  const angleOf = (index) => `${slots > 1 ? -78 + (156 / (slots - 1)) * index : 0}deg`;
 
   colors.forEach((color, index) => {
     const button = document.createElement("button");
     button.className = "swatch";
     button.style.setProperty("--dot", `rgb(${color.join(" ")})`);
     button.style.setProperty("--i", index);
-    button.style.setProperty("--angle", angleOf(index));
-    button.title = `Color ${color.join(", ")}`;
-    button.setAttribute("aria-label", `Aplicar color ${toHex(color)}`);
+    button.setAttribute("aria-label", `Color ${toHex(color)}`);
+    button.title = toHex(color);
+    button.dataset.hex = toHex(color);
     button.addEventListener("click", () => {
-      if (bridge) perform("color", color);
+      paint(color, powerOf(state?.brightness ?? 100) || 1, null);
+      markColor(button.dataset.hex);
+      perform("color", color);
     });
     row.append(button);
   });
@@ -266,97 +285,139 @@ function renderColors(snapshot) {
   const custom = document.createElement("label");
   custom.className = "swatch swatch--custom";
   custom.style.setProperty("--i", colors.length);
-  custom.style.setProperty("--angle", angleOf(colors.length));
-  custom.title = "Elegir cualquier color";
-
+  custom.title = "Cualquier color";
   const input = document.createElement("input");
   input.type = "color";
-  input.id = "customColor";
-  input.value = live;
-  input.setAttribute("aria-label", "Elegir un color personalizado");
-  input.addEventListener("input", (event) => previewColor(hexToRgb(event.target.value)));
-  input.addEventListener("change", (event) => {
-    const rgb = hexToRgb(event.target.value);
-    previewColor(rgb);
-    if (bridge) perform("color", rgb);
-  });
-
+  input.value = toHex(liveColor());
+  input.setAttribute("aria-label", "Elegir cualquier color");
+  input.addEventListener("input", (event) =>
+    paint(hexToRgb(event.target.value), powerOf(state?.brightness ?? 100) || 1, null),
+  );
+  input.addEventListener("change", (event) => perform("color", hexToRgb(event.target.value)));
   custom.append(input);
   row.append(custom);
+  markColor();
 }
 
-function setSlider(id, value, min, max) {
-  const slider = $(id);
-  if (document.activeElement !== slider) slider.value = value;
+function markColor(hex = state?.pilot?.color ? toHex(state.pilot.color) : null) {
+  for (const swatch of $("colorRow").querySelectorAll(".swatch[data-hex]")) {
+    swatch.classList.toggle("is-current", swatch.dataset.hex === hex);
+  }
+}
+
+/* Las 28 escenas de WiZ en cuatro grupos, para no mostrarlas todas a la vez. */
+const SCENE_GROUPS = [
+  { name: "Blancos", ids: [12, 11, 13, 15, 16, 14] },
+  { name: "Ambiente", ids: [1, 2, 3, 5, 6, 7, 9, 10, 18, 23] },
+  { name: "Color", ids: [4, 8, 17, 19, 24, 25, 26] },
+  { name: "Temporada", ids: [20, 21, 22, 27, 28] },
+];
+let sceneTab = null;
+let followedScene = null;
+
+function groupOf(id) {
+  return SCENE_GROUPS.findIndex((group) => group.ids.includes(id));
+}
+
+function renderTabs() {
+  const tabs = $("sceneTabs");
+  if (!tabs.querySelector(".tab")) {
+    SCENE_GROUPS.forEach((group, index) => {
+      const tab = document.createElement("button");
+      tab.className = "tab";
+      tab.setAttribute("role", "tab");
+      tab.textContent = group.name;
+      tab.addEventListener("click", () => {
+        sceneTab = index;
+        renderScenes(state);
+      });
+      tabs.append(tab);
+    });
+  }
+  const all = [...tabs.querySelectorAll(".tab")];
+  all.forEach((tab, index) => {
+    const active = index === sceneTab;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  // La barra se desliza bajo la pestaña activa, como en Windows 11.
+  const active = all[sceneTab];
+  const bar = $("tabsBar");
+  bar.style.width = `${active.offsetWidth - 24}px`;
+  bar.style.transform = `translateX(${active.offsetLeft + 12}px)`;
 }
 
 function renderScenes(snapshot) {
   const grid = $("sceneGrid");
-  const current = snapshot.pilot?.scene_id;
-  const signature = JSON.stringify([
-    snapshot.scenes.map((scene) => scene.id),
-    snapshot.favorites.map((scene) => scene.id),
-    current,
-  ]);
-  if (grid.dataset.signature === signature) return;
+  const current = snapshot.pilot?.state ? snapshot.pilot.scene_id : null;
+  // La pestaña sigue a la escena del foco cuando cambia; si no, se queda donde la dejó el usuario.
+  if (current && current !== followedScene && groupOf(current) >= 0) sceneTab = groupOf(current);
+  followedScene = current;
+  sceneTab ??= 0;
+  renderTabs();
+  const byId = new Map(snapshot.scenes.map((scene) => [scene.id, scene]));
+  const scenes = SCENE_GROUPS[sceneTab].ids.map((id) => byId.get(id)).filter(Boolean);
+  const signature = JSON.stringify([sceneTab, scenes.map((scene) => scene.id)]);
+  if (grid.dataset.signature === signature) {
+    markScene(current);
+    return;
+  }
   grid.dataset.signature = signature;
   grid.replaceChildren();
 
-  if (!snapshot.scenes.length) {
+  if (!scenes.length) {
     const empty = document.createElement("p");
     empty.className = "note";
-    empty.textContent = "Este foco todavía no tiene escenas cargadas.";
+    empty.textContent = "Este foco todavía no tiene escenas.";
     grid.append(empty);
-  } else {
-    for (const scene of snapshot.scenes) {
-      grid.append(sceneTile(scene, scene.id === current));
-    }
+    markScene(null);
+    return;
   }
-
-  const quick = $("quickSceneGrid");
-  quick.replaceChildren();
-  const favourites = (snapshot.favorites ?? []).slice(0, 6);
-  if (!favourites.length) {
-    const empty = document.createElement("p");
-    empty.className = "note";
-    empty.textContent = "Este foco todavía no tiene escenas marcadas como favoritas.";
-    quick.append(empty);
-  } else {
-    for (const scene of favourites) {
-      quick.append(sceneTile(scene, scene.id === current));
-    }
-  }
+  scenes.forEach((scene, index) => {
+    const button = document.createElement("button");
+    button.className = "scene";
+    button.classList.toggle("is-animated", scene.animated);
+    button.title = scene.animated ? `${scene.name}, en movimiento` : scene.name;
+    window.Light.palette({ id: scene.id, rgb: scene.color }).forEach((hex, step) =>
+      button.style.setProperty(`--c${step}`, hex),
+    );
+    button.style.setProperty("--i", Math.min(index, 12));
+    const name = document.createElement("span");
+    name.className = "scene__name";
+    name.textContent = scene.name;
+    button.append(name);
+    button.dataset.id = scene.id;
+    button.addEventListener("click", () => {
+      paint(scene.color, powerOf(state?.brightness ?? 100) || 1, scene);
+      markScene(scene.id);
+      run("apply_scene", { id: scene.id });
+    });
+    grid.append(button);
+  });
+  requestAnimationFrame(() => markScene(current));
 }
 
-function sceneTile(scene, isCurrent) {
-  const button = document.createElement("button");
-  button.className = "scene";
-  button.classList.toggle("is-current", isCurrent);
-  button.style.setProperty("--dot", `rgb(${scene.color.join(" ")})`);
-
-  const block = document.createElement("span");
-  block.className = "scene__block";
-
-  const name = document.createElement("span");
-  name.className = "scene__name";
-  if (scene.animated) {
-    const live = document.createElement("span");
-    live.className = "scene__live";
-    name.append(live);
+/* Un solo marcador viaja entre escenas: se ve de dónde viene y a dónde va la luz. */
+function markScene(id) {
+  const mark = $("sceneMark");
+  let target = null;
+  for (const button of $("sceneGrid").querySelectorAll(".scene")) {
+    const active = Number(button.dataset.id) === id;
+    button.classList.toggle("is-current", active);
+    button.setAttribute("aria-pressed", String(active));
+    if (active) target = button;
   }
-  name.append(scene.name);
-
-  button.append(block, name);
-  button.addEventListener("click", () => {
-    if (bridge) run("apply_scene", { id: scene.id });
-  });
-  return button;
+  mark.classList.toggle("is-visible", Boolean(target));
+  if (!target) return;
+  mark.style.width = `${target.offsetWidth}px`;
+  mark.style.height = `${target.offsetHeight}px`;
+  mark.style.transform = `translate(${target.offsetLeft}px, ${target.offsetTop}px)`;
 }
 
 function renderTimer() {
   const chip = $("timerChip");
   const armed = timerSeconds !== null && timerSeconds !== undefined;
-  chip.classList.toggle("chip--live", armed);
+  chip.classList.toggle("chip--ok", armed);
   if (!armed) {
     chip.textContent = "Sin programar";
     return;
@@ -394,90 +455,185 @@ function on(id, event, handler) {
   $(id).addEventListener(event, handler);
 }
 
-/* ---------- pestañas ---------- */
-
-let chosenTab = null;
-
-function syncTab(snapshot) {
-  const wanted = chosenTab ?? (snapshot.connected ? "home" : "connections");
-  const tabs = [...$("tabs").querySelectorAll(".tab")];
-  document.querySelector(".app").dataset.panel = wanted;
-  tabs.forEach((item) => {
-    const active = item.dataset.tab === wanted;
-    item.classList.toggle("is-active", active);
-    item.setAttribute("aria-selected", String(active));
-  });
-  const index = tabs.findIndex((item) => item.dataset.tab === wanted);
-  $("tabs").style.setProperty("--tab-index", Math.max(0, index));
-  for (const panel of $("panels").querySelectorAll(".panel")) {
-    panel.classList.toggle("is-active", panel.dataset.panel === wanted);
+/* Ignición: al encender, la luz se abre en círculo desde el punto tocado; al apagar, la sombra la cierra. */
+function ignite(on, x, y) {
+  const bloom = $("lightBloom");
+  const box = light.getBoundingClientRect();
+  const ox = x ?? box.width / 2;
+  const oy = y ?? box.height / 2;
+  light.classList.add("is-igniting");
+  clearTimeout(light.igniteTimer);
+  light.igniteTimer = setTimeout(() => light.classList.remove("is-igniting"), 820);
+  // Con WebGPU el shader dibuja el frente de luz; al apagar basta con que la potencia baje.
+  if (window.Light.gpu) {
+    if (on) window.Light.ignite((box.left + ox) / innerWidth, (box.top + oy) / innerHeight);
+    return;
   }
+  const radius = Math.hypot(Math.max(ox, box.width - ox), Math.max(oy, box.height - oy));
+  bloom.classList.toggle("is-dark", !on);
+  bloom.getAnimations().forEach((animation) => animation.cancel());
+  if (reduceMotion.matches) {
+    bloom.animate([{ opacity: 0.6 }, { opacity: 0 }], { duration: 260, easing: "ease-out" });
+    return;
+  }
+  const circle = (r) => `circle(${r}px at ${ox}px ${oy}px)`;
+  bloom.animate(
+    [
+      // Cada tramo lleva su curva: el círculo se abre con decisión y luego la luz se asienta.
+      { clipPath: circle(0), opacity: 1, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+      { clipPath: circle(radius), opacity: 1, offset: 0.55, easing: "cubic-bezier(0.4, 0, 0.2, 1)" },
+      { clipPath: circle(radius), opacity: 0 },
+    ],
+    { duration: on ? 900 : 600 },
+  );
 }
 
-on("tabs", "click", (event) => {
-  const tab = event.target.closest(".tab");
-  if (!tab) return;
-  chosenTab = tab.dataset.tab;
-  syncTab(state ?? {});
-});
+/* Encender/apagar se ve al instante; el foco confirma después y render corrige si falla. */
+function togglePower(x, y) {
+  if (!state?.pilot) return;
+  const next = !state.pilot.state;
+  state.pilot.state = next;
+  ignite(next, x, y);
+  document.body.classList.toggle("is-off", !next);
+  applyColors();
+  setBrightness(state.brightness);
+  $("sceneName").textContent = next ? "Encendiendo…" : "Apagado";
+  markScene(next ? state.pilot.scene_id : null);
+  perform(next ? "on" : "off");
+}
 
-/* ---------- hero ---------- */
+/* ---------- vistas ---------- */
 
-on("powerBtn", "click", () => perform(state?.pilot?.state ? "off" : "on"));
-on("daylightBtn", "click", () => perform("daylight"));
-on("refreshBtn", "click", () => run("refresh"));
-on("lampBtn", "click", () => {
-  if (state?.pilot) perform(state.pilot.state ? "off" : "on");
-});
+function syncView() {
+  const wanted = view ?? (state?.connected ? "home" : "settings");
+  document.querySelector(".app").dataset.panel = wanted;
+  document.body.dataset.panel = wanted;
+  window.Light.active(wanted === "home");
+  $("settingsBtn").setAttribute("aria-pressed", String(wanted === "settings"));
+}
+
+/* Ajustes entra desde la derecha y la luz vuelve desde la izquierda: el orden espacial se mantiene. */
+function goTo(next) {
+  if (document.querySelector(".app").dataset.panel === next) return;
+  const swap = () => {
+    view = next;
+    syncView();
+  };
+  document.documentElement.dataset.towards = next;
+  if (document.startViewTransition && !reduceMotion.matches) document.startViewTransition(swap);
+  else swap();
+}
+
+on("settingsBtn", "click", () =>
+  goTo(document.querySelector(".app").dataset.panel === "settings" ? "home" : "settings"),
+);
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && chosenTab && chosenTab !== "home") {
-    chosenTab = "home";
-    syncTab(state ?? {});
+  if (event.key === "Escape" && document.querySelector(".app").dataset.panel === "settings") goTo("home");
+});
+
+on("refreshBtn", "click", () => run("refresh"));
+on("powerBtn", "click", (event) => {
+  event.stopPropagation();
+  // La luz se abre desde el botón, aunque esté en la barra y fuera del panel.
+  const button = event.currentTarget.getBoundingClientRect();
+  const box = light.getBoundingClientRect();
+  togglePower(button.left + button.width / 2 - box.left, button.top + button.height / 2 - box.top);
+});
+
+/* ---------- la luz: arrastrar atenúa, un clic enciende o apaga ---------- */
+
+const light = $("lampBtn");
+let drag = null;
+
+light.addEventListener("pointerdown", (event) => {
+  if (!state?.pilot) return;
+  drag = { x: event.clientX, start: state.brightness ?? 100, value: null, ox: event.offsetX, oy: event.offsetY };
+  light.setPointerCapture(event.pointerId);
+});
+
+light.addEventListener("pointermove", (event) => {
+  if (!drag) return;
+  const dx = event.clientX - drag.x;
+  if (drag.value === null && Math.abs(dx) < 6) return;
+  if (!isOn()) return;
+  const value = Math.round(Math.max(1, Math.min(100, drag.start + (dx / light.clientWidth) * 140)));
+  drag.value = value;
+  light.classList.add("is-dragging");
+  setBrightness(value, { instant: true });
+  paint(liveColor(), powerOf(value));
+});
+
+light.addEventListener("pointerup", () => {
+  if (!drag) return;
+  const { value, ox, oy } = drag;
+  drag = null;
+  light.classList.remove("is-dragging");
+  if (value === null) togglePower(ox, oy);
+  else {
+    state.brightness = value;
+    perform("brightness", value);
   }
+});
+
+light.addEventListener("pointercancel", () => {
+  drag = null;
+  light.classList.remove("is-dragging");
+  applyColors();
+});
+
+light.addEventListener("keydown", (event) => {
+  if (!state?.pilot) return;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    togglePower();
+    return;
+  }
+  const step = { ArrowRight: 5, ArrowUp: 5, ArrowLeft: -5, ArrowDown: -5 }[event.key];
+  if (!step || !isOn()) return;
+  event.preventDefault();
+  const value = Math.max(1, Math.min(100, (state.brightness ?? 100) + step));
+  state.brightness = value;
+  setBrightness(value, { instant: true });
+  applyColors();
+  clearTimeout(light.sendTimer);
+  light.sendTimer = setTimeout(() => perform("brightness", value), 250);
 });
 
 /* ---------- diales ---------- */
 
 on("brightness", "input", (event) => {
   const value = Number(event.target.value);
-  $("brightnessValue").textContent = `${value} %`;
-  document.documentElement.style.setProperty("--v", value);
-  document.documentElement.style.setProperty("--power", Math.max(0.15, value / 100).toFixed(2));
+  setBrightness(value, { instant: true });
+  paint(liveColor(), powerOf(value));
 });
 
-on("brightness", "change", (event) => perform("brightness", Number(event.target.value)));
+on("brightness", "change", (event) => {
+  state.brightness = Number(event.target.value);
+  perform("brightness", state.brightness);
+});
 
 on("temperature", "input", (event) => {
   const value = Number(event.target.value);
   $("temperatureValue").textContent = `${value} K`;
-  previewColor(kelvinToRgb(value));
+  paint(kelvinToRgb(value), powerOf(state?.brightness ?? 100) || 1, null);
 });
 
 on("temperature", "change", (event) => perform("temperature", Number(event.target.value)));
 
-/* ---------- escenas ---------- */
-
-on("allScenesBtn", "click", () => {
-  const showingAll = state && state.scenes.length > state.favorites.length;
-  run("set_show_all_scenes", { showAll: !showingAll });
-});
-
-on("quickScenesBtn", "click", () => {
-  chosenTab = "scenes";
-  syncTab(state ?? {});
-});
 
 /* ---------- rutinas ---------- */
 
-on("timerStartBtn", "click", () => {
-  const minutes = Math.max(1, Number($("timerMinutes").value) || 1);
-  run("start_timer", { minutes });
-});
-
 on("timerPresets", "click", (event) => {
   const preset = event.target.closest(".preset");
-  if (preset) $("timerMinutes").value = preset.dataset.minutes;
+  if (!preset) return;
+  $("timerMinutes").value = preset.dataset.minutes;
+  run("start_timer", { minutes: Number(preset.dataset.minutes) });
+});
+
+on("timerStartBtn", "click", () => {
+  const minutes = Math.max(1, Math.min(600, Number($("timerMinutes").value) || 1));
+  run("start_timer", { minutes });
 });
 
 on("timerCancelBtn", "click", () => run("cancel_timer"));
@@ -491,61 +647,78 @@ on("routineSaveBtn", "click", () => {
   });
 });
 
-/* ---------- conexiones ---------- */
+/* ---------- conexión local: descubrimiento automático ---------- */
 
-on("backendSwitch", "click", (event) => {
-  const button = event.target.closest(".segmented__btn");
-  if (button) run("set_backend", { backend: button.dataset.backend });
-});
+function useLight(found) {
+  return run("save_local_setup", {
+    exportPath: $("localExport").value,
+    ip: found.ip,
+    mac: found.mac,
+    deviceName: $("deviceNameInput").value,
+  });
+}
 
-on("pickExportBtn", "click", async () => {
-  const path = await invoke("pick_export");
-  if (path) {
-    $("localExport").value = path;
-    const devices = await invoke("load_export", { path });
-    if (devices?.length) {
-      const device = devices[0];
-      $("localMac").value = device.mac;
-      $("deviceNameInput").value = device.name;
-      if (device.white_range) {
-        $("cloudMin").value = device.white_range[0];
-        $("cloudMax").value = device.white_range[1];
-      }
-      $("discoveryNote").textContent = `${devices.length} foco(s) en el export.`;
-    }
-  }
-});
-
-on("discoverBtn", "click", async () => {
-  $("discoveryNote").textContent = "Buscando focos WiZ en tu red…";
-  const lights = await invoke("discover");
+function showFound(lights) {
   const list = $("foundList");
   list.replaceChildren();
-  if (!lights) return;
-  $("discoveryNote").textContent = lights.length
-    ? `${lights.length} foco(s) encontrados.`
-    : "No se encontró ningún foco WiZ en la red.";
-  for (const light of lights) {
+  const current = (state?.local_mac ?? "").replace(/[:-]/g, "").toLowerCase();
+  for (const found of lights) {
     const item = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = `${light.mac} · ${light.ip} · ${light.rssi ?? "?"} dBm`;
+    label.className = "found__label";
+    label.textContent = `${found.ip}`;
+    const meta = document.createElement("span");
+    meta.className = "note";
+    meta.textContent = `${found.mac} · ${found.rssi ?? "?"} dBm`;
+    label.append(meta);
+    const isCurrent = found.mac === current && state?.local_ip === found.ip;
     const pick = document.createElement("button");
-    pick.textContent = "Usar este foco";
-    // Plug and play: elegir un foco encontrado ya lo deja configurado.
-    pick.addEventListener("click", () => {
-      $("localIp").value = light.ip;
-      $("localMac").value = light.mac;
-      run("save_local_setup", {
-        exportPath: $("localExport").value,
-        ip: light.ip,
-        mac: light.mac,
-        deviceName: $("deviceNameInput").value,
-      });
-    });
+    pick.className = isCurrent ? "btn btn--quiet" : "btn btn--primary";
+    pick.textContent = isCurrent ? "En uso" : "Usar";
+    pick.disabled = isCurrent;
+    pick.addEventListener("click", () => useLight(found));
     item.append(label, pick);
     list.append(item);
   }
-});
+}
+
+let scanning = null;
+
+/* Busca focos y, si puede decidir solo, los configura:
+   - sin foco local y uno solo en la red: lo usa;
+   - el foco guardado cambió de IP (DHCP): la actualiza. */
+function scan({ auto = false } = {}) {
+  if (!bridge) return Promise.resolve();
+  if (scanning) return scanning;
+  $("discoveryNote").textContent = "Buscando focos WiZ en tu red…";
+  $("discoverBtn").disabled = true;
+  scanning = invoke("discover")
+    .then(async (lights) => {
+      if (!lights) return;
+      showFound(lights);
+      $("discoveryNote").textContent = lights.length
+        ? `${lights.length === 1 ? "1 foco encontrado" : `${lights.length} focos encontrados`} en tu red.`
+        : "No encontré focos WiZ. Comprueba que estén encendidos y en esta red Wi-Fi.";
+      if (!auto || !state) return;
+      const saved = (state.local_mac ?? "").replace(/[:-]/g, "").toLowerCase();
+      const same = lights.find((found) => found.mac === saved);
+      if (state.has_local && same && same.ip !== state.local_ip) {
+        await useLight(same);
+        $("statusText").textContent = `El foco cambió de IP: ahora ${same.ip}`;
+      } else if (!state.has_local && lights.length === 1) {
+        await useLight(lights[0]);
+        view = "home";
+        syncView();
+      }
+    })
+    .finally(() => {
+      scanning = null;
+      $("discoverBtn").disabled = false;
+    });
+  return scanning;
+}
+
+on("discoverBtn", "click", () => scan());
 
 on("saveLocalBtn", "click", () =>
   run("save_local_setup", {
@@ -555,6 +728,76 @@ on("saveLocalBtn", "click", () =>
     deviceName: $("deviceNameInput").value,
   }),
 );
+
+on("backendSwitch", "click", (event) => {
+  const button = event.target.closest(".segmented__btn");
+  if (button) run("set_backend", { backend: button.dataset.backend });
+});
+
+/* ---------- WiZ Cloud en tres pasos ---------- */
+
+let editingOauth = false;
+
+/* El export trae device_id, home_id, MAC y rango: con él no hay que copiar nada a mano. */
+on("pickExportBtn", "click", async () => {
+  const path = await invoke("pick_export");
+  if (!path) return;
+  $("localExport").value = path;
+  const devices = await invoke("load_export", { path });
+  if (!devices?.length) return;
+  const saved = (state?.local_mac ?? "").replace(/[:-]/g, "").toLowerCase();
+  const device = devices.find((candidate) => candidate.mac === saved) ?? devices[0];
+  if (!state?.local_mac) $("deviceNameInput").value = device.name;
+  if (device.device_id && device.home_id) {
+    await run("save_cloud_setup", {
+      deviceId: String(device.device_id),
+      homeId: String(device.home_id),
+      mac: device.mac,
+      minimum: device.white_range ? String(device.white_range[0]) : "",
+      maximum: device.white_range ? String(device.white_range[1]) : "",
+    });
+  }
+  // Si el foco local ya funciona, el export solo añade la clave para firmar.
+  if (state?.has_local) {
+    await run("save_local_setup", {
+      exportPath: path,
+      ip: state.local_ip,
+      mac: state.local_mac,
+      deviceName: "",
+    });
+  }
+});
+
+on("saveOauthBtn", "click", async () => {
+  if (state?.cloud_ready && !editingOauth) {
+    editingOauth = true;
+    renderSettings(state);
+    $("googleClientId").focus();
+    return;
+  }
+  const saved = await run("save_cloud_oauth", {
+    googleClientId: $("googleClientId").value,
+    googleClientSecret: $("googleClientSecret").value,
+    wizClientId: $("wizClientId").value,
+    wizClientSecret: $("wizClientSecret").value,
+  });
+  if (saved) {
+    editingOauth = false;
+    // Los secretos no se quedan en el formulario después de guardarlos.
+    for (const id of ["googleClientId", "googleClientSecret", "wizClientId", "wizClientSecret"]) {
+      $(id).value = "";
+    }
+    renderSettings(saved);
+  }
+});
+
+on("loginCloudBtn", "click", async () => {
+  if (state?.backend !== "cloud" && !(await run("set_backend", { backend: "cloud" }))) return;
+  $("statusText").textContent = "Termina el inicio de sesión en tu navegador…";
+  perform("connect");
+});
+
+on("clearSessionBtn", "click", () => run("clear_cloud_session_command"));
 
 on("saveCloudBtn", "click", () =>
   run("save_cloud_setup", {
@@ -566,31 +809,28 @@ on("saveCloudBtn", "click", () =>
   }),
 );
 
-on("saveOauthBtn", "click", () =>
-  run("save_cloud_oauth", {
-    googleClientId: $("googleClientId").value,
-    googleClientSecret: $("googleClientSecret").value,
-    wizClientId: $("wizClientId").value,
-    wizClientSecret: $("wizClientSecret").value,
-  }),
-);
-
-on("clearSessionBtn", "click", () => run("clear_cloud_session_command"));
-
-on("loginCloudBtn", "click", () => perform("connect"));
-
 /* ---------- arranque ---------- */
+
+/* La primera lectura enciende la ventana con la misma ignición que el botón. */
+function boot() {
+  new ResizeObserver(() => markScene(state?.pilot?.state ? state.pilot.scene_id : null)).observe($("sceneGrid"));
+  if (isOn()) ignite(true);
+}
 
 async function start() {
   if (bridge) {
-    const snapshot = await bridge.invoke("snapshot");
-    render(snapshot);
+    render(await bridge.invoke("snapshot"));
+    // Las pestañas necesitan el catálogo completo de escenas.
+    if (state.scenes.length < 28) await run("set_show_all_scenes", { showAll: true });
+    boot();
     // Tauri v2 entrega {event, id, payload}; el sondeo manda el Snapshot dentro.
-    const listen = bridge.event?.listen ?? bridge.listen;
-    if (listen) await listen("state", (event) => render(event?.payload ?? event));
+    await bridge.listen("state", (event) => render(event?.payload ?? event));
+    // Al abrir: busca focos si no hay ninguno o si el guardado no contesta.
+    if (state.backend === "local" && !state.has_local) scan({ auto: true });
     return;
   }
   demo();
+  boot();
 }
 
 /* Modo navegador: sirve para revisar el diseño fuera de la app.

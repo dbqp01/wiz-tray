@@ -6,168 +6,215 @@
     <title>WiZ Tray</title>
     <link rel="stylesheet" href="app.css" />
   </head>
-  <body>
+  <body data-panel="home">
+    <canvas class="light-canvas" id="lightCanvas" aria-hidden="true"></canvas>
+    <div class="light-fallback" id="lightFallback" aria-hidden="true" hidden></div>
     <div class="app" data-panel="home">
-      <div class="atmos" aria-hidden="true">
-        <span class="atmos__blob atmos__blob--a"></span>
-        <span class="atmos__blob atmos__blob--b"></span>
-        <span class="atmos__blob atmos__blob--c"></span>
-        <span class="atmos__grain"></span>
-      </div>
-
-      <header class="topbar">
-        <div class="brand">
-          <span class="brand__mark" aria-hidden="true"></span>
-          <span class="brand__name">WiZ Tray</span>
+      <header class="bar">
+        <div class="bar__who">
+          <span class="bar__name" id="deviceName">Mi foco</span>
+          <span class="bar__via" id="backendChip">Casa por Wi-Fi</span>
         </div>
-        <div class="topbar__meta">
-          <span class="chip" id="backendChip">Casa por Wi-Fi</span>
-          <span class="stamp" id="stamp">Sin lectura</span>
+        <div class="bar__tools">
+          <button class="iconbtn" id="powerBtn" title="Encender o apagar" aria-label="Encender o apagar" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8v5.4" /><path d="M4.6 3.8a5.2 5.2 0 1 0 6.8 0" /></svg>
+          </button>
           <button class="iconbtn" id="refreshBtn" title="Leer el foco otra vez" aria-label="Actualizar">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M20 11.5a8 8 0 1 1-2.4-5.7" />
-              <path d="M20 4.5v4.6h-4.6" />
-            </svg>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 7.5a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2.5v3h-3" /></svg>
+          </button>
+          <button class="iconbtn" id="settingsBtn" title="Ajustes" aria-label="Ajustes" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" /><path d="M6.6 1.5h2.8l.4 1.8 1.2.7 1.8-.6 1.4 2.4-1.4 1.2v1.4l1.4 1.2-1.4 2.4-1.8-.6-1.2.7-.4 1.8H6.6l-.4-1.8-1.2-.7-1.8.6-1.4-2.4 1.4-1.2V7.3L1.8 6.1l1.4-2.4 1.8.6 1.2-.7z" /></svg>
           </button>
         </div>
       </header>
 
-      <main class="stage">
-        <div class="hud home-only">
-          <div class="hud__item">
-            <span class="hud__label">Color</span>
-            <span class="hud__value">
-              <span class="dot" id="statColor"></span>
-              <span class="num" id="statColorHex">—</span>
-            </span>
+      <!-- La luz: todo este bloque toma el color y el brillo reales del foco. -->
+      <section class="view view--home" data-view="home">
+        <div class="light" id="lampBtn" role="slider" tabindex="0" aria-label="Brillo. Arrastra para cambiarlo, haz clic para encender o apagar"
+          aria-valuemin="1" aria-valuemax="100" aria-valuenow="100">
+          <span class="light__bloom" id="lightBloom" aria-hidden="true"></span>
+          <div class="light__readout">
+            <span class="light__value num"><span id="brightnessValue">100</span><span class="light__unit">%</span></span>
+            <span class="light__scene" id="sceneName">Sin conexión</span>
           </div>
-          <div class="hud__item">
-            <span class="hud__label">Señal</span>
-            <span class="hud__value num" id="statSignal">—</span>
-          </div>
-          <div class="hud__item">
-            <span class="hud__label">Rango</span>
-            <span class="hud__value num" id="statRange">—</span>
-          </div>
+          <span class="light__hint" aria-hidden="true">Arrastra para atenuar, clic para apagar</span>
         </div>
 
-        <div class="core">
-          <div class="lamp-shell">
-            <div class="halo" aria-hidden="true">
-              <span class="halo__glow"></span>
-              <span class="halo__ring halo__ring--a"></span>
-              <span class="halo__ring halo__ring--b"></span>
-              <span class="halo__ring halo__ring--c"></span>
-              <span class="halo__spark" style="--x: -42%; --y: -38%; --d: 0s"></span>
-              <span class="halo__spark" style="--x: 46%; --y: -30%; --d: -1.7s"></span>
-              <span class="halo__spark" style="--x: -52%; --y: 18%; --d: -3.1s"></span>
-              <span class="halo__spark" style="--x: 38%; --y: 34%; --d: -4.6s"></span>
-              <span class="halo__spark" style="--x: 6%; --y: -52%; --d: -2.4s"></span>
-            </div>
-
-            <div class="orbit home-only" id="colorRow" aria-label="Colores rápidos"></div>
-
-            <button class="lamp" id="lampBtn" type="button" title="Encender o apagar" aria-label="Encender o apagar el foco">
-              <svg class="bulb" viewBox="0 0 160 178" role="img" aria-label="Foco WiZ">
-                <defs>
-                  <radialGradient id="glassGrad" cx="40%" cy="30%" r="78%">
-                    <stop class="glass-stop glass-stop--a" offset="0%" />
-                    <stop class="glass-stop glass-stop--b" offset="55%" />
-                    <stop class="glass-stop glass-stop--c" offset="100%" />
-                  </radialGradient>
-                  <radialGradient id="flashGrad" cx="50%" cy="50%" r="50%">
-                    <stop offset="0%" stop-color="#ffffff" stop-opacity=".9" />
-                    <stop offset="70%" stop-color="#ffffff" stop-opacity=".12" />
-                    <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
-                  </radialGradient>
-                </defs>
-                <g class="bulb__rings">
-                  <circle class="bulb__ring" cx="80" cy="72" r="54" />
-                  <circle class="bulb__ring bulb__ring--late" cx="80" cy="72" r="62" />
-                  <circle class="bulb__ring bulb__ring--slow" cx="80" cy="72" r="70" />
-                </g>
-                <circle class="bulb__glass" cx="80" cy="72" r="42" fill="url(#glassGrad)" />
-                <circle class="bulb__rim" cx="80" cy="72" r="42" />
-                <path class="bulb__filament" d="M64 88 Q72 58 80 88 Q88 58 96 88" />
-                <path class="bulb__spark" d="M64 88 Q72 58 80 88 Q88 58 96 88" />
-                <circle class="bulb__flash" cx="80" cy="72" r="52" fill="url(#flashGrad)" />
-                <path class="bulb__neck" d="M68 112 H92" />
-                <g class="bulb__base">
-                  <path d="M64 122 H96" />
-                  <path d="M67 132 H93" />
-                  <path d="M70 142 H90" />
-                  <path d="M73 151 H87" />
-                </g>
-                <ellipse class="bulb__shadow" cx="80" cy="168" rx="32" ry="4" />
-              </svg>
-            </button>
+        <div class="controls">
+          <div class="lines">
+            <label class="line">
+              <span class="line__label">Brillo</span>
+              <input id="brightness" class="slider" type="range" min="1" max="100" value="100" aria-label="Brillo" />
+            </label>
+            <label class="line">
+              <span class="line__label">Blanco</span>
+              <input id="temperature" class="slider slider--temp" type="range" min="2200" max="6500" step="50" value="4000" aria-label="Temperatura de color" />
+              <span class="line__value num" id="temperatureValue">4000 K</span>
+            </label>
           </div>
 
-          <div class="identity home-only">
-            <h1 class="device" id="deviceName">Mi foco</h1>
-            <p class="state" id="sceneName">Sin conexión</p>
-            <div class="identity__actions">
-              <button class="btn btn--primary" id="powerBtn">Encender</button>
-              <button class="btn btn--ghost" id="daylightBtn">Luz de día</button>
-            </div>
+          <div class="colors" id="colorRow" aria-label="Colores"></div>
+
+          <div class="tabs" id="sceneTabs" role="tablist" aria-label="Grupos de escenas">
+            <span class="tabs__bar" id="tabsBar" aria-hidden="true"></span>
+          </div>
+          <div class="scenes-box">
+            <span class="scene-mark" id="sceneMark" aria-hidden="true"></span>
+            <div class="scenes" id="sceneGrid"></div>
           </div>
         </div>
+      </section>
 
-        <aside class="pod pod--bright home-only">
-          <div class="pod__head">
-            <span class="pod__label">Brillo</span>
-            <span class="pod__value num" id="brightnessValue">100 %</span>
+      <!-- Ajustes: rutinas y conexión en una sola vista. -->
+      <section class="view view--settings" data-view="settings">
+        <div class="settings">
+          <h2 class="settings__title">Ajustes</h2>
+
+          <h3 class="group">Conexión</h3>
+          <div class="segmented" id="backendSwitch" role="group" aria-label="Origen de la conexión">
+            <span class="segmented__pill" aria-hidden="true"></span>
+            <button class="segmented__btn is-active" data-backend="local">En casa (Wi-Fi)</button>
+            <button class="segmented__btn" data-backend="cloud">WiZ Cloud</button>
           </div>
-          <input id="brightness" class="slider" type="range" min="1" max="100" value="100" aria-label="Brillo" />
-          <div class="scale"><span>1 %</span><span>100 %</span></div>
-        </aside>
 
-        <aside class="pod pod--temp home-only">
-          <div class="pod__head">
-            <span class="pod__label">Temperatura</span>
-            <span class="pod__value num" id="temperatureValue">4000 K</span>
+          <div class="card" data-for="local">
+            <div class="card__head">
+              <div>
+                <h4 class="card__title">Foco en tu red</h4>
+                <p class="note" id="discoveryNote">Busco focos WiZ en tu red al abrir la app.</p>
+              </div>
+              <span class="chip" id="localState">Sin configurar</span>
+            </div>
+            <ul class="found" id="foundList"></ul>
+            <div class="actions">
+              <button class="btn" id="discoverBtn">Buscar otra vez</button>
+            </div>
+            <details class="more">
+              <summary>Configurar a mano</summary>
+              <div class="fields">
+                <div class="field">
+                  <label class="field__label" for="localIp">IP del foco</label>
+                  <input id="localIp" class="input" type="text" placeholder="192.168.100.9" />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="localMac">MAC</label>
+                  <input id="localMac" class="input" type="text" placeholder="a4:cf:e9:2b:71:08" />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="deviceNameInput">Nombre</label>
+                  <input id="deviceNameInput" class="input" type="text" placeholder="Luz de Dormitorio" />
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn btn--primary" id="saveLocalBtn">Guardar</button>
+              </div>
+            </details>
           </div>
-          <input id="temperature" class="slider slider--temp" type="range" min="2200" max="6500" step="50" value="4000" aria-label="Temperatura de color" />
-          <div class="scale"><span id="tempMin">2200 K</span><span id="tempMax">6500 K</span></div>
-        </aside>
 
-        <section class="strip home-only">
-          <div class="strip__head">
-            <span class="strip__label">Escenas favoritas</span>
-            <button class="link" id="quickScenesBtn">Ver todas</button>
+          <div class="card" data-for="cloud">
+            <div class="card__head">
+              <div>
+                <h4 class="card__title">WiZ Cloud</h4>
+                <p class="note">Controla el foco fuera de casa.</p>
+              </div>
+              <span class="chip" id="cloudState">Sin credenciales</span>
+            </div>
+
+            <ol class="steps">
+              <li class="step" id="stepExport">
+                <span class="step__n" aria-hidden="true"></span>
+                <div class="step__body">
+                  <span class="step__title">Elige el export de la app WiZ</span>
+                  <span class="note">Rellena el foco y el hogar solo. El archivo se lee en este equipo y no sale de él.</span>
+                  <div class="field__row">
+                    <input id="localExport" class="input" type="text" placeholder="wiz-home.json" readonly />
+                    <button class="btn" id="pickExportBtn">Elegir archivo</button>
+                  </div>
+                </div>
+              </li>
+              <li class="step" id="stepOauth">
+                <span class="step__n" aria-hidden="true"></span>
+                <div class="step__body">
+                  <span class="step__title">Credenciales OAuth de la app WiZ</span>
+                  <span class="note">Las de la propia app WiZ, no las de Google. Se cifran con DPAPI en tu perfil de Windows.</span>
+                  <div class="fields" id="oauthFields">
+                    <div class="field">
+                      <label class="field__label" for="googleClientId">Google client ID</label>
+                      <input id="googleClientId" class="input" type="text" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                      <label class="field__label" for="googleClientSecret">Google client secret</label>
+                      <input id="googleClientSecret" class="input" type="password" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                      <label class="field__label" for="wizClientId">WiZ client ID</label>
+                      <input id="wizClientId" class="input" type="text" autocomplete="off" />
+                    </div>
+                    <div class="field">
+                      <label class="field__label" for="wizClientSecret">WiZ client secret</label>
+                      <input id="wizClientSecret" class="input" type="password" autocomplete="off" />
+                    </div>
+                  </div>
+                  <div class="actions">
+                    <button class="btn" id="saveOauthBtn">Guardar credenciales</button>
+                  </div>
+                </div>
+              </li>
+              <li class="step" id="stepLogin">
+                <span class="step__n" aria-hidden="true"></span>
+                <div class="step__body">
+                  <span class="step__title">Inicia sesión</span>
+                  <span class="note">Se abre tu navegador. Al volver, la app ya controla el foco.</span>
+                  <div class="actions">
+                    <button class="btn btn--primary" id="loginCloudBtn">Iniciar sesión con Google</button>
+                    <button class="btn btn--quiet" id="clearSessionBtn">Cerrar sesión</button>
+                  </div>
+                </div>
+              </li>
+            </ol>
+
+            <details class="more">
+              <summary>Datos del foco en Cloud</summary>
+              <div class="fields">
+                <div class="field">
+                  <label class="field__label" for="cloudDeviceId">device_id</label>
+                  <input id="cloudDeviceId" class="input" type="text" />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="cloudHomeId">home_id</label>
+                  <input id="cloudHomeId" class="input" type="text" />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="cloudMac">MAC</label>
+                  <input id="cloudMac" class="input" type="text" placeholder="a4:cf:e9:2b:71:08" />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="cloudMin">K mínimo</label>
+                  <input id="cloudMin" class="input input--num" type="number" placeholder="2700" />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="cloudMax">K máximo</label>
+                  <input id="cloudMax" class="input input--num" type="number" placeholder="6500" />
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn" id="saveCloudBtn">Guardar foco</button>
+              </div>
+            </details>
           </div>
-          <div class="scenes scenes--strip" id="quickSceneGrid"></div>
-        </section>
-      </main>
 
-      <div class="sheets" id="panels">
-        <section class="panel" data-panel="scenes" role="tabpanel" aria-label="Escenas">
-          <div class="panel__head">
-            <h2 class="panel__title">Escenas del foco</h2>
-            <button class="btn btn--quiet" id="allScenesBtn">Ver las 28 escenas</button>
-          </div>
-          <p class="note" id="scenesNote">Toca una escena para aplicarla al foco.</p>
-          <div class="scenes" id="sceneGrid"></div>
-        </section>
-
-        <section class="panel" data-panel="routines" role="tabpanel" aria-label="Rutinas">
-          <h2 class="panel__title">Rutinas</h2>
+          <h3 class="group">Rutinas</h3>
           <div class="card">
             <div class="card__head">
-              <h3 class="card__title">Apagado automático</h3>
+              <h4 class="card__title">Apagar en</h4>
               <span class="chip" id="timerChip">Sin programar</span>
             </div>
-            <div class="field field--inline">
-              <label class="field__label" for="timerMinutes">Minutos</label>
-              <input id="timerMinutes" class="input input--num" type="number" min="1" max="600" value="30" />
-              <div class="presets" id="timerPresets">
-                <button class="preset" data-minutes="15">15 min</button>
-                <button class="preset" data-minutes="30">30 min</button>
-                <button class="preset" data-minutes="60">1 hora</button>
-                <button class="preset" data-minutes="120">2 horas</button>
-              </div>
-            </div>
-            <div class="actions">
+            <div class="presets" id="timerPresets">
+              <button class="preset" data-minutes="15">15 min</button>
+              <button class="preset" data-minutes="30">30 min</button>
+              <button class="preset" data-minutes="60">1 h</button>
+              <button class="preset" data-minutes="120">2 h</button>
+              <input id="timerMinutes" class="input input--num" type="number" min="1" max="600" value="30" aria-label="Minutos" />
               <button class="btn btn--primary" id="timerStartBtn">Programar</button>
               <button class="btn btn--quiet" id="timerCancelBtn">Cancelar</button>
             </div>
@@ -175,156 +222,34 @@
 
           <div class="card">
             <div class="card__head">
-              <h3 class="card__title">Rutina diaria</h3>
+              <h4 class="card__title">Cada día</h4>
               <label class="switch">
                 <input id="routineEnabled" type="checkbox" aria-label="Activar la rutina diaria" />
                 <span class="switch__track"><span class="switch__dot"></span></span>
               </label>
             </div>
-            <div class="fields">
-              <div class="field">
-                <label class="field__label" for="routineTime">Hora local</label>
-                <input id="routineTime" class="input" type="time" value="22:00" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="routineAction">Acción</label>
-                <select id="routineAction" class="input">
-                  <option value="off">Apagar</option>
-                  <option value="on">Encender</option>
-                  <option value="daylight">Encender con Luz de día</option>
-                </select>
-              </div>
+            <div class="field__row">
+              <select id="routineAction" class="input" aria-label="Acción">
+                <option value="off">Apagar</option>
+                <option value="on">Encender</option>
+                <option value="daylight">Encender con Luz de día</option>
+              </select>
+              <span class="note note--mid">a las</span>
+              <input id="routineTime" class="input input--time" type="time" value="22:00" aria-label="Hora local" />
+              <button class="btn btn--primary" id="routineSaveBtn">Guardar</button>
             </div>
-            <div class="actions">
-              <button class="btn btn--primary" id="routineSaveBtn">Guardar rutina</button>
-            </div>
-            <p class="note note--foot" id="routineNote">Se aplica una vez al día, a la hora local de este equipo.</p>
+            <p class="note" id="routineNote">Se aplica una vez al día, a la hora local de este equipo.</p>
           </div>
-        </section>
-
-        <section class="panel" data-panel="connections" role="tabpanel" aria-label="Conexiones">
-          <h2 class="panel__title">Conexiones</h2>
-          <div class="segmented" id="backendSwitch" role="group" aria-label="Origen de la conexión">
-            <button class="segmented__btn is-active" data-backend="local">Casa por Wi-Fi</button>
-            <button class="segmented__btn" data-backend="cloud">WiZ Cloud</button>
-          </div>
-
-          <div class="card">
-            <div class="card__head">
-              <h3 class="card__title">Control local</h3>
-              <span class="chip chip--quiet" id="localState">Sin configurar</span>
-            </div>
-            <p class="note note--block">
-              Directo por tu red Wi-Fi, sin cuenta ni internet. Busca el foco y queda listo.
-            </p>
-            <div class="actions actions--split">
-              <span class="note" id="discoveryNote">Busca focos WiZ en tu red.</span>
-              <button class="btn btn--primary" id="discoverBtn">Buscar en mi red</button>
-            </div>
-            <ul class="found" id="foundList"></ul>
-
-            <h4 class="card__label">O configúralo a mano</h4>
-            <div class="field">
-              <label class="field__label" for="localExport">Export de WiZ (opcional, para firmar)</label>
-              <div class="field__row">
-                <input id="localExport" class="input" type="text" placeholder="wiz-home.json" />
-                <button class="btn" id="pickExportBtn">Elegir archivo</button>
-              </div>
-              <span class="note">Se lee en este equipo y nunca sale de él.</span>
-            </div>
-            <div class="fields">
-              <div class="field">
-                <label class="field__label" for="localIp">IP del foco</label>
-                <input id="localIp" class="input" type="text" placeholder="192.168.100.9" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="localMac">MAC</label>
-                <input id="localMac" class="input" type="text" placeholder="a4:cf:e9:2b:71:08" />
-              </div>
-            </div>
-            <div class="field">
-              <label class="field__label" for="deviceNameInput">Nombre del foco</label>
-              <div class="field__row">
-                <input id="deviceNameInput" class="input" type="text" placeholder="Luz de Dormitorio" />
-                <button class="btn" id="saveLocalBtn">Guardar</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card__head">
-              <h3 class="card__title">WiZ Cloud</h3>
-              <span class="chip chip--quiet" id="cloudState">Sin credenciales</span>
-            </div>
-            <p class="note note--block">
-              Control remoto fuera de casa. Usa las credenciales OAuth de la propia app WiZ (no las
-              de Google), que se guardan cifradas con DPAPI en tu perfil de Windows.
-            </p>
-            <div class="fields">
-              <div class="field">
-                <label class="field__label" for="googleClientId">Google client ID</label>
-                <input id="googleClientId" class="input" type="text" placeholder="ID de cliente de Google" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="googleClientSecret">Google client secret</label>
-                <input id="googleClientSecret" class="input" type="password" placeholder="Secreto de cliente de Google" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="wizClientId">WiZ client ID</label>
-                <input id="wizClientId" class="input" type="text" placeholder="ID de cliente de la app WiZ" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="wizClientSecret">WiZ client secret</label>
-                <input id="wizClientSecret" class="input" type="password" placeholder="Secreto de cliente de la app WiZ" />
-              </div>
-            </div>
-            <div class="actions">
-              <button class="btn btn--primary" id="saveOauthBtn">Guardar credenciales</button>
-              <button class="btn btn--quiet" id="clearSessionBtn">Cerrar sesión</button>
-            </div>
-            <div class="fields">
-              <div class="field">
-                <label class="field__label" for="cloudDeviceId">device_id</label>
-                <input id="cloudDeviceId" class="input" type="text" placeholder="device_id de WiZ Cloud" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="cloudHomeId">home_id</label>
-                <input id="cloudHomeId" class="input" type="text" placeholder="home_id de WiZ Cloud" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="cloudMac">MAC</label>
-                <input id="cloudMac" class="input" type="text" placeholder="a4:cf:e9:2b:71:08" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="cloudMin">K mínimo</label>
-                <input id="cloudMin" class="input input--num" type="number" placeholder="2700" />
-              </div>
-              <div class="field">
-                <label class="field__label" for="cloudMax">K máximo</label>
-                <input id="cloudMax" class="input input--num" type="number" placeholder="6500" />
-              </div>
-            </div>
-            <div class="actions actions--split">
-              <button class="btn btn--primary" id="loginCloudBtn">Iniciar sesión con Google</button>
-              <button class="btn" id="saveCloudBtn">Guardar foco</button>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <nav class="tabs" id="tabs" role="tablist" aria-label="Secciones">
-        <span class="tabs__pill" aria-hidden="true"></span>
-        <button class="tab is-active" role="tab" data-tab="home" aria-selected="true">Inicio</button>
-        <button class="tab" role="tab" data-tab="scenes" aria-selected="false">Escenas</button>
-        <button class="tab" role="tab" data-tab="routines" aria-selected="false">Rutinas</button>
-        <button class="tab" role="tab" data-tab="connections" aria-selected="false">Conexiones</button>
-      </nav>
+        </div>
+      </section>
 
       <footer class="status" id="status">
         <span class="status__text" id="statusText">Listo</span>
-        <span class="status__error" id="errorText"></span>
+        <span class="status__error" id="errorText" role="alert"></span>
+        <span class="status__stamp num" id="stamp"></span>
       </footer>
     </div>
+    <script src="light.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
