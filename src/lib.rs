@@ -282,8 +282,9 @@ pub fn perform(config: &LightConfig, action: &Action) -> Result<Pilot, String> {
     }
 
     let mut last_error = "El foco no confirmó el cambio.".to_string();
-    for _ in 0..5 {
-        thread::sleep(Duration::from_millis(400));
+    // En local el foco contesta en decenas de ms: sondear corto confirma antes con el mismo plazo total.
+    for _ in 0..16 {
+        thread::sleep(Duration::from_millis(120));
         match get_pilot(config) {
             Ok(pilot) if pilot.matches(expected) => return Ok(pilot),
             Ok(_) => last_error = "El foco respondió, pero el estado no coincide.".to_string(),
@@ -763,13 +764,16 @@ pub fn discover_lights() -> Result<Vec<DiscoveredLight>, String> {
         let _ = socket.send_to(payload.as_bytes(), SocketAddrV4::new(ip, DEVICE_PORT));
     }
     let deadline = Instant::now() + Duration::from_millis(1800);
+    // Los focos contestan casi a la vez: tras 500 ms sin respuestas nuevas ya no llegan más.
+    let mut quiet_until: Option<Instant> = None;
     let mut buffer = [0_u8; 4096];
     let mut lights: BTreeMap<String, DiscoveredLight> = BTreeMap::new();
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && quiet_until.is_none_or(|quiet| Instant::now() < quiet) {
         match socket.recv_from(&mut buffer) {
             Ok((length, address)) => {
                 if let Some(light) = parse_discovered(address.ip(), &buffer[..length]) {
                     lights.entry(light.mac.clone()).or_insert(light);
+                    quiet_until = Some(Instant::now() + Duration::from_millis(500));
                 }
             }
             // Windows convierte los ICMP de hosts ausentes en ConnectionReset.
