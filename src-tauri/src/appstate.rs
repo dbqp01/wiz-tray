@@ -33,6 +33,8 @@ pub struct AppState {
     pub error: Option<String>,
     pub busy: bool,
     pub show_all_scenes: bool,
+    /// Sube con cada lectura aplicada: el sondeo descarta lo que leyó si otra llegó antes.
+    pub revision: u64,
 }
 
 impl AppState {
@@ -55,6 +57,7 @@ impl AppState {
             error: None,
             busy: false,
             show_all_scenes: true,
+            revision: 0,
         }
     }
 }
@@ -192,6 +195,7 @@ pub fn apply_pilot(state: &mut AppState, pilot: Pilot) {
         state.color = [red, green, blue];
     }
     state.pilot = Some(pilot);
+    state.revision += 1;
 }
 
 fn action_from(kind: &str, value: Option<&Value>) -> Result<Action, String> {

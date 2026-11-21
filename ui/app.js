@@ -55,9 +55,10 @@ function sceneById(sceneId) {
 function liveColor() {
   const pilot = state?.pilot;
   if (!pilot) return AMBER;
-  if (pilot.color) return pilot.color;
+  // Igual que state::preview_rgb: con sceneId distinto de 0 manda la escena, aunque el foco informe un color.
   const scene = sceneById(pilot.scene_id)?.color;
   if (scene) return scene;
+  if (pilot.color) return pilot.color;
   return kelvinToRgb(pilot.temp ?? state?.temperature ?? 4000);
 }
 
@@ -77,7 +78,7 @@ function hexToRgb(hex) {
 /* Escena que pinta la luz ahora: solo cuando el foco está en una escena (no en color ni en blanco). */
 function liveScene() {
   const pilot = state?.pilot;
-  if (!pilot?.state || pilot.color || !pilot.scene_id) return null;
+  if (!pilot?.state || !pilot.scene_id) return null;
   return sceneById(pilot.scene_id) ?? { id: pilot.scene_id };
 }
 
@@ -299,7 +300,7 @@ function renderColors(snapshot) {
   markColor();
 }
 
-function markColor(hex = state?.pilot?.color ? toHex(state.pilot.color) : null) {
+function markColor(hex = state?.pilot?.color && !state.pilot.scene_id ? toHex(state.pilot.color) : null) {
   for (const swatch of $("colorRow").querySelectorAll(".swatch[data-hex]")) {
     swatch.classList.toggle("is-current", swatch.dataset.hex === hex);
   }
@@ -894,6 +895,12 @@ async function start() {
   }
   demo();
   boot();
+  // PROTOTIPO: solo en el navegador con ?variant=; borrar al elegir variante.
+  if (new URLSearchParams(location.search).has("variant")) {
+    const proto = document.createElement("script");
+    proto.src = "prototype.js";
+    document.body.append(proto);
+  }
 }
 
 /* Modo navegador: sirve para revisar el diseño fuera de la app.

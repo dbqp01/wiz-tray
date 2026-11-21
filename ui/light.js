@@ -189,12 +189,25 @@ fn sceneAt(id: i32, uv: vec2f, asp: vec2f, per: f32) -> vec2f {
     });
     const ubuf = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ubuf } }] });
-    // Si la GPU se pierde (driver, suspensión), la ventana sigue con el degradado CSS.
-    device.lost.then(() => {
+    // Si la GPU se pierde (driver, suspensión al ocultar la ventana), se pasa al degradado CSS
+    // un momento y se vuelve a pedir WebGPU: sin esto las escenas se quedaban quietas para siempre.
+    device.lost.then((info) => {
       gpu = null;
       canvas.hidden = true;
       fallback.hidden = false;
       wake();
+      if (info.reason === "destroyed") return;
+      setTimeout(() => {
+        init()
+          .catch(() => null)
+          .then((ready) => {
+            if (!ready) return;
+            gpu = ready;
+            canvas.hidden = false;
+            fallback.hidden = true;
+            wake();
+          });
+      }, 600);
     });
     return { device, ctx, pipeline, ubuf, bind, data: new Float32Array(24) };
   }
@@ -256,8 +269,11 @@ fn sceneAt(id: i32, uv: vec2f, asp: vec2f, per: f32) -> vec2f {
     set(target, power) {
       const next = lookOf(target);
       if (next.mode !== look.mode || next.period !== look.period) {
-        prev = look;
-        blend = 0;
+        // A mitad de un fundido, se queda la escena que más se ve: así el cambio no salta.
+        if (blend >= 0.5) {
+          prev = look;
+          blend = 0;
+        }
       }
       look = next;
       want.pal = next.pal;

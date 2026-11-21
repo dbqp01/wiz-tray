@@ -1,0 +1,245 @@
+/* PROTOTIPO, desechable: estilos de las variantes A, B y C y de la barra para cambiar entre ellas. */
+
+.proto-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  font: 600 12px/16px "Segoe UI", sans-serif;
+  transform: translateX(-50%);
+}
+
+.proto-bar span {
+  min-width: 150px;
+  text-align: center;
+}
+
+.proto-bar button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: #eee;
+  color: #111;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.proto-bar button:hover {
+  background: #ddd;
+}
+
+/* ---------- A · Luz que viaja ---------- */
+
+/* El recuadro pulsado suelta un pulso de su propia luz, que el shader continúa por la ventana. */
+body[data-variant="A"] .scene.proto-press {
+  animation: proto-press 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body[data-variant="A"] .scene.proto-press::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  background: radial-gradient(circle, var(--c2), transparent 70%);
+  animation: proto-flash 0.6s ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes proto-press {
+  30% {
+    transform: scale(0.95);
+  }
+}
+
+@keyframes proto-flash {
+  from {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+
+/* ---------- B · Recuadros vivos ---------- */
+
+body[data-variant="B"] .scene {
+  background-size: 100% 100%;
+}
+
+body[data-variant="B"] .scene::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* Oleaje: una banda de luz cruza despacio, de ida y vuelta. */
+body[data-variant="B"] .scene[data-mode="1"] {
+  background: linear-gradient(115deg, var(--c0), var(--c1) 38%, var(--c2) 50%, var(--c1) 62%, var(--c0));
+  background-size: 260% 100%;
+  animation: proto-sweep 7s ease-in-out infinite alternate;
+}
+
+/* Ocaso y amanecer: un sol que baja y vuelve a subir. */
+body[data-variant="B"] .scene[data-mode="2"],
+body[data-variant="B"] .scene[data-mode="7"] {
+  background:
+    radial-gradient(42% 70% at 50% 40%, var(--c2), transparent 70%),
+    linear-gradient(to bottom, var(--c1), var(--c0));
+  background-size: 100% 180%, 100% 100%;
+  animation: proto-sun 9s ease-in-out infinite alternate;
+}
+
+body[data-variant="B"] .scene[data-mode="7"] {
+  animation-duration: 14s;
+}
+
+/* Latido: dos pulsos de luz y una pausa. */
+body[data-variant="B"] .scene[data-mode="3"]::before {
+  background: radial-gradient(circle at 50% 45%, var(--c2), transparent 65%);
+  animation: proto-beat 2.6s ease-out infinite;
+}
+
+/* Brasa: la luz sube desde abajo y tiembla un poco. */
+body[data-variant="B"] .scene[data-mode="4"] {
+  background: linear-gradient(to top, var(--c2), var(--c1) 35%, var(--c0) 70%, var(--c1));
+  background-size: 100% 220%;
+  animation: proto-rise 2.8s linear infinite;
+}
+
+body[data-variant="B"] .scene[data-mode="4"]::before {
+  background: radial-gradient(60% 50% at 50% 100%, var(--c2), transparent 70%);
+  animation: proto-flicker 0.9s steps(3, end) infinite;
+}
+
+/* Follaje: dos manchas de luz que se mueven como entre hojas. */
+body[data-variant="B"] .scene[data-mode="5"] {
+  background:
+    radial-gradient(30% 45% at 30% 35%, var(--c2), transparent 70%),
+    radial-gradient(28% 40% at 70% 60%, var(--c2), transparent 70%),
+    linear-gradient(135deg, var(--c1), var(--c0));
+  background-size: 160% 160%, 180% 180%, 100% 100%;
+  animation: proto-leaves 8s ease-in-out infinite alternate;
+}
+
+/* Fiesta: la paleta gira. */
+body[data-variant="B"] .scene[data-mode="6"] {
+  background: conic-gradient(from var(--proto-spin), var(--c0), var(--c1), var(--c2), var(--c1), var(--c0));
+  animation: proto-spin 6s linear infinite;
+}
+
+@property --proto-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes proto-sweep {
+  from {
+    background-position: 0% 0;
+  }
+  to {
+    background-position: 100% 0;
+  }
+}
+
+@keyframes proto-sun {
+  from {
+    background-position: 50% 0%, 0 0;
+  }
+  to {
+    background-position: 50% 100%, 0 0;
+  }
+}
+
+@keyframes proto-beat {
+  0%,
+  45%,
+  100% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.85;
+  }
+  20% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes proto-rise {
+  from {
+    background-position: 0 0%;
+  }
+  to {
+    background-position: 0 100%;
+  }
+}
+
+@keyframes proto-flicker {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes proto-leaves {
+  from {
+    background-position: 0% 0%, 100% 100%, 0 0;
+  }
+  to {
+    background-position: 100% 60%, 0% 30%, 0 0;
+  }
+}
+
+@keyframes proto-spin {
+  to {
+    --proto-spin: 360deg;
+  }
+}
+
+/* ---------- C · Panel de cristal ---------- */
+
+/* La luz ocupa la ventana; los controles van en una hoja de Acrylic encima, siempre en blanco. */
+body[data-variant="C"] .controls {
+  --on-light: #fff;
+  --on-light-2: rgb(255 255 255 / 0.68);
+  margin: 0 12px 12px;
+  padding: 16px 20px 14px;
+  border-radius: 16px;
+  background: rgb(18 16 20 / 0.5);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 24px 48px -24px rgb(0 0 0 / 0.7);
+  backdrop-filter: blur(28px) saturate(1.5);
+}
+
+body[data-variant="C"] .light__value {
+  font-size: clamp(96px, 27vh, 196px);
+  font-weight: 100;
+  letter-spacing: -0.06em;
+}
+
+body[data-variant="C"] .light__scene {
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-variant] .scene,
+  body[data-variant] .scene::before {
+    animation: none !important;
+  }
+}
