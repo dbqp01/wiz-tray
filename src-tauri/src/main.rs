@@ -177,8 +177,14 @@ fn spawn_poller(app: AppHandle) {
             guard.status = "Apagado automático".to_string();
         }
 
+        // Mientras la interfaz cambia el foco, una lectura del sondeo traería el estado viejo
+        // y la ventana volvería atrás un instante: se descarta si hay una orden en curso o más nueva.
+        let before = shared.lock().expect("estado de WiZ Tray").revision;
         if let Ok(pilot) = connections.perform(backend, &Action::Refresh) {
             let mut guard = shared.lock().expect("estado de WiZ Tray");
+            if guard.busy || guard.revision != before {
+                continue;
+            }
             appstate::apply_pilot(&mut guard, pilot);
         }
         appstate::publish(&app, &shared);
