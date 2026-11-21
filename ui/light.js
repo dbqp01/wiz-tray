@@ -297,6 +297,10 @@ fn sceneAt(id: i32, uv: vec2f, asp: vec2f, per: f32) -> vec2f {
     palette(target) {
       return lookOf(target).pal.map(linHex);
     },
+    /* Bucle de la escena (0 quieta): lo usan los recuadros para animarse igual que la luz. */
+    mode(target) {
+      return lookOf(target).mode;
+    },
     get gpu() {
       return Boolean(gpu);
     },

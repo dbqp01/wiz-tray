@@ -302,7 +302,8 @@ body[data-panel="home"] .iconbtn:hover {
 
 .app[data-panel="home"] .view--home {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  /* La luz guarda sitio para el número y la escena; si falta altura, se desplaza el panel, no la luz. */
+  grid-template-rows: minmax(150px, 1fr) minmax(0, auto);
   overflow: hidden;
 }
 
@@ -352,10 +353,10 @@ body[data-panel="home"] .iconbtn:hover {
   display: flex;
   align-items: flex-start;
   font-family: var(--display);
-  font-size: clamp(72px, 20vh, 148px);
+  font-size: clamp(72px, 26vh - 20px, 188px);
   line-height: 0.9;
-  font-weight: 200;
-  letter-spacing: -0.055em;
+  font-weight: 100;
+  letter-spacing: -0.06em;
   transition: transform 0.25s var(--ease), font-size 0.35s var(--ease);
 }
 
@@ -417,12 +418,20 @@ body.is-offline .light {
 
 /* ---------- controles ---------- */
 
+/* Los controles van en una hoja de Acrylic sobre la luz: se leen en blanco con cualquier escena. */
 .controls {
+  --on-light: #fff;
+  --on-light-2: rgb(255 255 255 / 0.68);
   display: grid;
   gap: 14px;
-  max-height: 52vh;
+  min-height: 0;
   overflow-y: auto;
-  padding: 4px 24px 12px;
+  margin: 0 12px 12px;
+  padding: 16px 20px 14px;
+  border-radius: 16px;
+  background: rgb(18 16 20 / 0.5);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 24px 48px -24px rgb(0 0 0 / 0.7);
+  backdrop-filter: blur(28px) saturate(1.5);
   color: var(--on-light);
   scrollbar-width: none;
 }
@@ -678,9 +687,139 @@ body.is-offline .light {
   outline-offset: 3px;
 }
 
-/* Las escenas en movimiento lo enseñan al pasar el ratón: su paleta se desplaza en bucle. */
-.scene.is-animated:hover {
-  animation: tile-drift 3.2s ease-in-out infinite alternate;
+/* Recuadros vivos: cada escena en movimiento repite en pequeño la misma idea que su bucle en el shader.
+   Todos los bucles cierran sin salto: van y vuelven (alternate) o recorren justo un periodo. */
+.scene[data-mode="1"] {
+  background: linear-gradient(115deg, var(--c0), var(--c1) 38%, var(--c2) 50%, var(--c1) 62%, var(--c0));
+  background-size: 260% 100%;
+  animation: pop-in 0.35s var(--ease) calc(var(--i) * 22ms) backwards, tile-sweep 7s ease-in-out infinite alternate;
+}
+
+.scene[data-mode="2"],
+.scene[data-mode="7"] {
+  background:
+    radial-gradient(42% 70% at 50% 40%, var(--c2), transparent 70%),
+    linear-gradient(to bottom, var(--c1), var(--c0));
+  background-size: 100% 180%, 100% 100%;
+  animation: pop-in 0.35s var(--ease) calc(var(--i) * 22ms) backwards, tile-sun 9s ease-in-out infinite alternate;
+}
+
+.scene[data-mode="7"] {
+  animation-duration: 0.35s, 14s;
+}
+
+.scene[data-mode="3"]::before,
+.scene[data-mode="4"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.scene[data-mode="3"]::before {
+  background: radial-gradient(circle at 50% 45%, var(--c2), transparent 65%);
+  animation: tile-beat 2.6s ease-out infinite;
+}
+
+/* La imagen mide dos recuadros y se repite: subirla un periodo entero la deja donde empezó. */
+.scene[data-mode="4"] {
+  background: linear-gradient(to top, var(--c2), var(--c1) 25%, var(--c0) 50%, var(--c1) 75%, var(--c2));
+  background-size: 100% 200%;
+  animation: pop-in 0.35s var(--ease) calc(var(--i) * 22ms) backwards, tile-rise 3.6s linear infinite;
+}
+
+.scene[data-mode="4"]::before {
+  background: radial-gradient(60% 55% at 50% 100%, var(--c2), transparent 70%);
+  animation: tile-glow 1.7s ease-in-out infinite alternate;
+}
+
+.scene[data-mode="5"] {
+  background:
+    radial-gradient(30% 45% at 30% 35%, var(--c2), transparent 70%),
+    radial-gradient(28% 40% at 70% 60%, var(--c2), transparent 70%),
+    linear-gradient(135deg, var(--c1), var(--c0));
+  background-size: 160% 160%, 180% 180%, 100% 100%;
+  animation: pop-in 0.35s var(--ease) calc(var(--i) * 22ms) backwards, tile-leaves 8s ease-in-out infinite alternate;
+}
+
+.scene[data-mode="6"] {
+  background: conic-gradient(from var(--tile-spin), var(--c0), var(--c1), var(--c2), var(--c1), var(--c0));
+  animation: pop-in 0.35s var(--ease) calc(var(--i) * 22ms) backwards, tile-spin 6s linear infinite;
+}
+
+@property --tile-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes tile-sweep {
+  from {
+    background-position: 0% 0;
+  }
+  to {
+    background-position: 100% 0;
+  }
+}
+
+@keyframes tile-sun {
+  from {
+    background-position: 50% 0%, 0 0;
+  }
+  to {
+    background-position: 50% 100%, 0 0;
+  }
+}
+
+@keyframes tile-beat {
+  0%,
+  45%,
+  100% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.85;
+  }
+  20% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes tile-rise {
+  from {
+    background-position: 0 0%;
+  }
+  to {
+    background-position: 0 200%;
+  }
+}
+
+@keyframes tile-glow {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 0.9;
+  }
+}
+
+@keyframes tile-leaves {
+  from {
+    background-position: 0% 0%, 100% 100%, 0 0;
+  }
+  to {
+    background-position: 100% 60%, 0% 30%, 0 0;
+  }
+}
+
+@keyframes tile-spin {
+  to {
+    --tile-spin: 360deg;
+  }
 }
 
 .scene__name {
@@ -693,12 +832,6 @@ body.is-offline .light {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
-}
-
-@keyframes tile-drift {
-  to {
-    background-position: 100% 100%;
-  }
 }
 
 @keyframes ring-in {
@@ -1373,7 +1506,8 @@ input[type="time"]::-webkit-calendar-picker-indicator {
     transition: opacity 0.2s, box-shadow 0.3s;
   }
 
-  .scene.is-animated:hover {
+  .scene[data-mode],
+  .scene[data-mode]::before {
     animation: none;
   }
 

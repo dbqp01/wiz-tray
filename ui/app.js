@@ -379,9 +379,9 @@ function renderScenes(snapshot) {
     button.className = "scene";
     button.classList.toggle("is-animated", scene.animated);
     button.title = scene.animated ? `${scene.name}, en movimiento` : scene.name;
-    window.Light.palette({ id: scene.id, rgb: scene.color }).forEach((hex, step) =>
-      button.style.setProperty(`--c${step}`, hex),
-    );
+    const target = { id: scene.id, rgb: scene.color, animated: scene.animated };
+    window.Light.palette(target).forEach((hex, step) => button.style.setProperty(`--c${step}`, hex));
+    button.dataset.mode = window.Light.mode(target);
     button.style.setProperty("--i", Math.min(index, 12));
     const name = document.createElement("span");
     name.className = "scene__name";
