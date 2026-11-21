@@ -21,7 +21,11 @@
         "visible": false,
         "theme": "Dark",
         "transparent": true,
-        "windowEffects": { "effects": ["mica"] }
+        "windowEffects": {
+          "effects": [
+            "mica"
+          ]
+        }
       }
     ],
     "security": {
@@ -29,8 +33,39 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": [],
-    "icon": ["icons/icon.ico"]
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "publisher": "dbqp01",
+    "shortDescription": "Controla tu foco WiZ desde la bandeja de Windows",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "Spanish",
+          "English"
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBCNUY2NzkxMUE1M0VGQzgKUldUSTcxTWFrV2RmQzVoY0swaVpiNTVxWHJubkJraVRoMjRPT01MK1JwSEcrdGNYNmZrL0RkenoK",
+      "endpoints": [
+        "https://github.com/dbqp01/wiz-tray/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -12,6 +12,7 @@ rfd = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["tray-icon", "image-ico"] }
+tauri-plugin-updater = "2"
 wiz-tray = { path = ".." }
 
 [dev-dependencies]

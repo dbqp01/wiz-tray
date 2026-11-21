@@ -1105,6 +1105,40 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   background: var(--fill-press);
 }
 
+/* Barra de progreso de Fluent: pista fina y relleno del acento. */
+.progress {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--stroke-strong);
+}
+
+.progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.3s var(--ease);
+}
+
+/* Punto en el engranaje cuando hay una versión nueva. */
+#settingsBtn {
+  position: relative;
+}
+
+.iconbtn__dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+  animation: pop-in 0.35s var(--ease);
+}
+
 /* ---------- botones ---------- */
 
 .btn {

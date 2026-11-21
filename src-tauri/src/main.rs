@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod appstate;
+mod updates;
 
 use std::time::{Duration, Instant};
 
@@ -18,6 +19,7 @@ use appstate::Shared;
 /// Arranca la app: bandeja, ventana oculta y hilo de sondeo.
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(appstate::shared())
         .invoke_handler(tauri::generate_handler![
             appstate::snapshot,
@@ -36,6 +38,8 @@ pub fn run() {
             appstate::set_routine,
             appstate::start_timer,
             appstate::cancel_timer,
+            updates::check_update,
+            updates::install_update,
         ])
         .setup(|app| {
             build_tray(app.handle())?;

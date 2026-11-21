@@ -809,6 +809,62 @@ on("saveCloudBtn", "click", () =>
   }),
 );
 
+/* ---------- actualizaciones ---------- */
+
+let pendingUpdate = null;
+
+function showUpdate({ chip, note, ok = false, install = false }) {
+  $("updateChip").textContent = chip;
+  $("updateChip").classList.toggle("chip--ok", ok);
+  $("updateNote").textContent = note;
+  $("installUpdateBtn").hidden = !install;
+  $("updateDot").hidden = !install;
+}
+
+/* `quiet`: la búsqueda del arranque no muestra errores de red; solo avisa si hay versión nueva. */
+async function checkUpdate({ quiet = false } = {}) {
+  if (!bridge) return;
+  $("checkUpdateBtn").disabled = true;
+  if (!quiet) showUpdate({ chip: "Buscando…", note: "Pregunto a GitHub por la última versión." });
+  try {
+    const info = await bridge.invoke("check_update");
+    $("appVersion").textContent = info.current;
+    pendingUpdate = info.available;
+    if (info.available) {
+      showUpdate({
+        chip: `Nueva: ${info.available}`,
+        note: info.notes?.trim() || `Hay una versión nueva. Tienes la ${info.current}.`,
+        install: true,
+      });
+    } else {
+      showUpdate({ chip: "Al día", note: "Tienes la última versión.", ok: true });
+    }
+  } catch (error) {
+    if (!quiet) showUpdate({ chip: "Sin conexión", note: String(error) });
+  } finally {
+    $("checkUpdateBtn").disabled = false;
+  }
+}
+
+on("checkUpdateBtn", "click", () => checkUpdate());
+
+on("installUpdateBtn", "click", async () => {
+  if (!pendingUpdate) return;
+  $("installUpdateBtn").disabled = true;
+  $("checkUpdateBtn").disabled = true;
+  $("updateProgress").hidden = false;
+  showUpdate({ chip: "Descargando…", note: `Descargo WiZ Tray ${pendingUpdate} y compruebo su firma.`, install: true });
+  try {
+    // Si todo va bien, el instalador cierra la app y la vuelve a abrir ya actualizada.
+    await bridge.invoke("install_update");
+  } catch (error) {
+    $("updateProgress").hidden = true;
+    $("installUpdateBtn").disabled = false;
+    $("checkUpdateBtn").disabled = false;
+    showUpdate({ chip: "Falló", note: String(error), install: true });
+  }
+});
+
 /* ---------- arranque ---------- */
 
 /* La primera lectura enciende la ventana con la misma ignición que el botón. */
@@ -827,6 +883,13 @@ async function start() {
     await bridge.listen("state", (event) => render(event?.payload ?? event));
     // Al abrir: busca focos si no hay ninguno o si el guardado no contesta.
     if (state.backend === "local" && !state.has_local) scan({ auto: true });
+    await bridge.listen("update-progress", ({ done, total }) => {
+      $("updateBar").style.width = total ? `${Math.round((done / total) * 100)}%` : "100%";
+      $("updateNote").textContent = total
+        ? `Descargando: ${(done / 1048576).toFixed(1)} de ${(total / 1048576).toFixed(1)} MB`
+        : `Descargando: ${(done / 1048576).toFixed(1)} MB`;
+    });
+    checkUpdate({ quiet: true });
     return;
   }
   demo();

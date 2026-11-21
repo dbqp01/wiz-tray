@@ -23,6 +23,7 @@
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 7.5a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2.5v3h-3" /></svg>
           </button>
           <button class="iconbtn" id="settingsBtn" title="Ajustes" aria-label="Ajustes" aria-pressed="false">
+            <span class="iconbtn__dot" id="updateDot" hidden></span>
             <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" /><path d="M6.6 1.5h2.8l.4 1.8 1.2.7 1.8-.6 1.4 2.4-1.4 1.2v1.4l1.4 1.2-1.4 2.4-1.8-.6-1.2.7-.4 1.8H6.6l-.4-1.8-1.2-.7-1.8.6-1.4-2.4 1.4-1.2V7.3L1.8 6.1l1.4-2.4 1.8.6 1.2-.7z" /></svg>
           </button>
         </div>
@@ -239,6 +240,22 @@
               <button class="btn btn--primary" id="routineSaveBtn">Guardar</button>
             </div>
             <p class="note" id="routineNote">Se aplica una vez al día, a la hora local de este equipo.</p>
+          </div>
+
+          <h3 class="group">Actualizaciones</h3>
+          <div class="card" id="updateCard">
+            <div class="card__head">
+              <div>
+                <h4 class="card__title">WiZ Tray <span class="num" id="appVersion"></span></h4>
+                <p class="note" id="updateNote">Busco versiones nuevas al abrir la app.</p>
+              </div>
+              <span class="chip" id="updateChip">Sin comprobar</span>
+            </div>
+            <div class="progress" id="updateProgress" hidden><span id="updateBar"></span></div>
+            <div class="actions">
+              <button class="btn btn--primary" id="installUpdateBtn" hidden>Instalar y reiniciar</button>
+              <button class="btn" id="checkUpdateBtn">Buscar actualizaciones</button>
+            </div>
           </div>
         </div>
       </section>

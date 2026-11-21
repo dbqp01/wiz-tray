@@ -47,16 +47,15 @@ La ventana usa Mica en Windows 11, sigue las transiciones de Fluent y respeta la
 
 ## Instalación
 
-Necesitas Windows 10 u 11 de 64 bits y Docker Desktop con Compose.
+1. Descarga **`WiZ-Tray_x.y.z_x64-setup.exe`** desde [Releases](https://github.com/dbqp01/wiz-tray/releases/latest).
+2. Ábrelo. Se instala solo para tu usuario, sin permisos de administrador, en `%LOCALAPPDATA%\Programs\WiZ Tray`.
+3. WiZ Tray queda en el menú Inicio. Al cerrar la ventana sigue en la bandeja; para cerrarla del todo, usa **Salir** en el menú del icono.
 
-```powershell
-git clone https://github.com/dbqp01/wiz-tray.git
-cd wiz-tray
-docker compose run --build --rm build
-.\dist\WiZ Tray.exe
-```
+Funciona en Windows 10 y 11 de 64 bits. Si falta WebView2, el instalador lo descarga.
 
-El build deja el ejecutable en `dist/WiZ Tray.exe`; la app no corre dentro del contenedor. Al cerrar la ventana, WiZ Tray sigue en la bandeja. Para cerrarla del todo, usa **Salir** en el menú del icono.
+**Actualizaciones.** Al abrirse, WiZ Tray busca versiones nuevas en Releases. Si hay una, aparece un punto en el engranaje y **Ajustes → Actualizaciones → Instalar y reiniciar** la descarga, comprueba su firma y reinicia la app ya actualizada.
+
+**Desinstalar.** Desde **Configuración → Aplicaciones → WiZ Tray**.
 
 ## Conectar el foco
 
@@ -122,7 +121,12 @@ rustup component add rustfmt
 # La app con interfaz y backend reales
 cd src-tauri
 cargo run
+
+# Instalador firmado y latest.json en dist\ (añade -Publish para crear la release en GitHub)
+.\scriptselease.ps1
 ```
+
+Para publicar una versión, sube `version` en `src-tauri/tauri.conf.json`, escribe las notas en `docs/releases/vX.Y.Z.md` y ejecuta `release.ps1 -Publish`. La firma usa la clave de `%USERPROFILE%\.tauri\wiz-tray.key`, que no está en el repo: sin ella no se pueden publicar actualizaciones que acepten las copias instaladas.
 
 | Ruta | Qué hay |
 |---|---|
