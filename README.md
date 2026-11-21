@@ -48,7 +48,7 @@ La ventana usa Mica en Windows 11, sigue las transiciones de Fluent y respeta la
 ## Instalación
 
 1. Descarga **`WiZ-Tray_x.y.z_x64-setup.exe`** desde [Releases](https://github.com/dbqp01/wiz-tray/releases/latest).
-2. Ábrelo. Se instala solo para tu usuario, sin permisos de administrador, en `%LOCALAPPDATA%\Programs\WiZ Tray`.
+2. Ábrelo. Se instala solo para tu usuario, sin permisos de administrador, en `%LOCALAPPDATA%\WiZ Tray`.
 3. WiZ Tray queda en el menú Inicio. Al cerrar la ventana sigue en la bandeja; para cerrarla del todo, usa **Salir** en el menú del icono.
 
 Funciona en Windows 10 y 11 de 64 bits. Si falta WebView2, el instalador lo descarga.
